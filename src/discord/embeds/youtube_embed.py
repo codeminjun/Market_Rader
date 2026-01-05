@@ -125,48 +125,58 @@ def create_youtube_list_embed(
     items: list[ContentItem],
     title: str = "🎬 새 유튜브 영상",
     max_items: int = 10,
+    video_summaries: dict = None,
 ) -> DiscordEmbed:
     """
-    유튜브 목록 Embed 생성 (압축형)
+    유튜브 목록 Embed 생성 (핵심 포인트 포함)
 
     Args:
         items: 유튜브 항목 리스트
         title: Embed 제목
         max_items: 최대 표시 개수
+        video_summaries: 영상별 AI 요약 딕셔너리
     """
     embed = DiscordEmbed(
         title=title,
         color="e74c3c",
     )
 
+    video_summaries = video_summaries or {}
     video_lines = []
+
     for item in items[:max_items]:
         # 우선순위 이모지
         if item.priority == Priority.HIGH:
-            priority_emoji = "⭐⭐⭐"
-        elif item.priority == Priority.MEDIUM:
-            priority_emoji = "⭐⭐"
-        else:
             priority_emoji = "⭐"
+        elif item.priority == Priority.MEDIUM:
+            priority_emoji = "☆"
+        else:
+            priority_emoji = "·"
 
         # 채널명
         channel = item.source
-        if len(channel) > 15:
-            channel = channel[:12] + "..."
+        if len(channel) > 10:
+            channel = channel[:8] + ".."
 
         # 제목 길이 제한
         item_title = item.title
-        if len(item_title) > 45:
-            item_title = item_title[:42] + "..."
+        if len(item_title) > 40:
+            item_title = item_title[:37] + "..."
 
-        line = f"{priority_emoji} **{channel}**\n└ [{item_title}]({item.url})"
+        line = f"{priority_emoji} **{channel}** [{item_title}]({item.url})"
+
+        # 핵심 포인트 추가 (있을 경우)
+        summary = video_summaries.get(item.id)
+        if summary and "key_points" in summary and summary["key_points"]:
+            key_point = summary["key_points"][0][:60]
+            if len(summary["key_points"][0]) > 60:
+                key_point += "..."
+            line += f"\n  └ 💡 {key_point}"
+
         video_lines.append(line)
 
     if video_lines:
-        embed.description = "\n\n".join(video_lines)
-
-    if len(items) > max_items:
-        embed.set_footer(text=f"외 {len(items) - max_items}건 더 있음")
+        embed.description = "\n".join(video_lines)
 
     return embed
 

@@ -4,11 +4,6 @@ youtube-transcript-api를 사용한 자막 수집
 """
 from typing import Optional
 from youtube_transcript_api import YouTubeTranscriptApi
-from youtube_transcript_api._errors import (
-    TranscriptsDisabled,
-    NoTranscriptFound,
-    VideoUnavailable,
-)
 
 from src.utils.logger import logger
 
@@ -37,74 +32,37 @@ class YouTubeTranscriptExtractor:
         Returns:
             자막 텍스트 또는 None
         """
+        # 선호 언어 순서대로 시도
+        for lang in self.PREFERRED_LANGUAGES:
+            try:
+                transcript_data = YouTubeTranscriptApi.get_transcript(
+                    video_id,
+                    languages=[lang]
+                )
+                full_text = self._combine_transcript(transcript_data)
+
+                if len(full_text) > max_length:
+                    full_text = full_text[:max_length] + "..."
+
+                logger.debug(f"Extracted transcript for {video_id}: {len(full_text)} chars")
+                return full_text
+
+            except Exception:
+                continue
+
+        # 기본 언어로 시도
         try:
-            # 자막 목록 조회
-            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-
-            # 선호 언어로 자막 찾기
-            transcript = self._find_best_transcript(transcript_list)
-
-            if not transcript:
-                logger.debug(f"No suitable transcript found for {video_id}")
-                return None
-
-            # 자막 데이터 가져오기
-            transcript_data = transcript.fetch()
-
-            # 텍스트로 변환
+            transcript_data = YouTubeTranscriptApi.get_transcript(video_id)
             full_text = self._combine_transcript(transcript_data)
 
-            # 길이 제한
             if len(full_text) > max_length:
                 full_text = full_text[:max_length] + "..."
 
-            logger.debug(f"Extracted transcript for {video_id}: {len(full_text)} chars")
             return full_text
 
-        except TranscriptsDisabled:
-            logger.debug(f"Transcripts disabled for video {video_id}")
-            return None
-        except NoTranscriptFound:
-            logger.debug(f"No transcript found for video {video_id}")
-            return None
-        except VideoUnavailable:
-            logger.debug(f"Video unavailable: {video_id}")
-            return None
         except Exception as e:
-            logger.error(f"Failed to get transcript for {video_id}: {e}")
+            logger.debug(f"No transcript available for {video_id}: {e}")
             return None
-
-    def _find_best_transcript(self, transcript_list):
-        """최적의 자막 찾기"""
-        # 수동 생성 자막 우선
-        try:
-            for lang in self.PREFERRED_LANGUAGES:
-                try:
-                    return transcript_list.find_transcript([lang])
-                except NoTranscriptFound:
-                    continue
-        except Exception:
-            pass
-
-        # 자동 생성 자막
-        try:
-            for lang in self.PREFERRED_LANGUAGES:
-                try:
-                    generated = transcript_list.find_generated_transcript([lang])
-                    return generated
-                except NoTranscriptFound:
-                    continue
-        except Exception:
-            pass
-
-        # 아무 자막이나 가져오기
-        try:
-            for transcript in transcript_list:
-                return transcript
-        except Exception:
-            pass
-
-        return None
 
     def _combine_transcript(self, transcript_data: list) -> str:
         """자막 데이터를 텍스트로 결합"""
@@ -126,17 +84,16 @@ class YouTubeTranscriptExtractor:
         Returns:
             [{"start": float, "duration": float, "text": str}, ...]
         """
+        for lang in self.PREFERRED_LANGUAGES:
+            try:
+                return YouTubeTranscriptApi.get_transcript(video_id, languages=[lang])
+            except Exception:
+                continue
+
         try:
-            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-            transcript = self._find_best_transcript(transcript_list)
-
-            if not transcript:
-                return None
-
-            return transcript.fetch()
-
+            return YouTubeTranscriptApi.get_transcript(video_id)
         except Exception as e:
-            logger.error(f"Failed to get transcript with timestamps for {video_id}: {e}")
+            logger.debug(f"No transcript with timestamps for {video_id}: {e}")
             return None
 
 

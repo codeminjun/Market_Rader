@@ -101,13 +101,23 @@ def create_report_item_embed(item: ContentItem) -> DiscordEmbed:
     return embed
 
 
+def get_importance_indicator(score: float) -> str:
+    """중요도 표시"""
+    if score >= 0.7:
+        return "🔴"
+    elif score >= 0.5:
+        return "🟠"
+    else:
+        return "🟡"
+
+
 def create_reports_list_embed(
     items: list[ContentItem],
     title: str = "📊 애널리스트 리포트",
     max_items: int = 10,
 ) -> DiscordEmbed:
     """
-    리포트 목록 Embed 생성 (압축형)
+    리포트 목록 Embed 생성 (날짜, 중요도 포함)
 
     Args:
         items: 리포트 항목 리스트
@@ -121,32 +131,46 @@ def create_reports_list_embed(
 
     report_lines = []
     for item in items[:max_items]:
+        # 중요도 표시
+        importance = get_importance_indicator(item.importance_score)
+
+        # 날짜
+        date_str = ""
+        if item.published_at:
+            date_str = item.published_at.strftime("%m/%d")
+
         # 증권사 추출
         broker = item.extra_data.get("broker", "")
-        if broker:
-            broker_tag = f"[{broker}]"
-        else:
-            broker_tag = ""
+        if broker and len(broker) > 6:
+            broker = broker[:5] + ".."
 
         # 종목명
         stock = item.extra_data.get("stock_name", "")
-        if stock:
-            stock_tag = f"[{stock}]"
-        else:
-            stock_tag = ""
+        if stock and len(stock) > 8:
+            stock = stock[:7] + ".."
 
         # 제목 길이 제한
         item_title = item.title
-        if len(item_title) > 50:
-            item_title = item_title[:47] + "..."
+        if len(item_title) > 35:
+            item_title = item_title[:32] + "..."
 
-        line = f"📄 {broker_tag}{stock_tag} [{item_title}]({item.url})"
+        # 태그 구성
+        tags = []
+        if date_str:
+            tags.append(date_str)
+        if broker:
+            tags.append(broker)
+        if stock:
+            tags.append(stock)
+        tag_str = " | ".join(tags) if tags else ""
+
+        line = f"{importance} [{item_title}]({item.url})"
+        if tag_str:
+            line += f"\n  └ `{tag_str}`"
+
         report_lines.append(line)
 
     if report_lines:
         embed.description = "\n".join(report_lines)
-
-    if len(items) > max_items:
-        embed.set_footer(text=f"외 {len(items) - max_items}건 더 있음")
 
     return embed

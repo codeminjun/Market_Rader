@@ -15,7 +15,7 @@ from src.utils.logger import logger
 from src.utils.cache import cache
 
 # Collectors
-from src.collectors.base import ContentItem, ContentType, Priority
+from src.collectors.base import ContentItem, ContentType
 from src.collectors.news import (
     NaverFinanceNewsCollector,
     RSSNewsCollector,
@@ -36,11 +36,10 @@ from src.analyzer import (
 from src.discord import (
     discord_sender,
     create_news_header_embed,
-    create_news_list_embed,
+    create_news_list_embeds,
     create_reports_header_embed,
     create_reports_list_embed,
     create_youtube_header_embed,
-    create_youtube_item_embed,
     create_youtube_list_embed,
 )
 
@@ -55,16 +54,19 @@ def validate_settings() -> bool:
     return True
 
 
-def collect_news() -> list[ContentItem]:
-    """뉴스 수집"""
+def collect_news() -> dict:
+    """뉴스 수집 (국내/해외 분리)"""
     logger.info("=== Collecting News ===")
-    all_news = []
+    korean_news = []
+    international_news = []
 
-    # 1. 네이버 금융 뉴스
+    # 1. 네이버 금융 뉴스 (국내)
     try:
         naver_collector = NaverFinanceNewsCollector(categories=["stock", "economy"])
         naver_news = naver_collector.collect()
-        all_news.extend(naver_news)
+        for item in naver_news:
+            item.extra_data["region"] = "korean"
+        korean_news.extend(naver_news)
         logger.info(f"Naver Finance: {len(naver_news)} items")
     except Exception as e:
         logger.error(f"Naver news collection failed: {e}")
@@ -75,15 +77,27 @@ def collect_news() -> list[ContentItem]:
         korean_sources = news_config.get("news", {}).get("korean", [])
         intl_sources = news_config.get("news", {}).get("international", [])
 
-        for source in korean_sources + intl_sources:
+        # 국내 RSS
+        for source in korean_sources:
             if source.get("type") == "rss" and source.get("enabled", True):
                 try:
-                    collector = RSSNewsCollector(
-                        name=source["name"],
-                        url=source["url"],
-                    )
+                    collector = RSSNewsCollector(name=source["name"], url=source["url"])
                     items = collector.collect()
-                    all_news.extend(items)
+                    for item in items:
+                        item.extra_data["region"] = "korean"
+                    korean_news.extend(items)
+                except Exception as e:
+                    logger.warning(f"RSS collection failed for {source.get('name')}: {e}")
+
+        # 해외 RSS
+        for source in intl_sources:
+            if source.get("type") == "rss" and source.get("enabled", True):
+                try:
+                    collector = RSSNewsCollector(name=source["name"], url=source["url"])
+                    items = collector.collect()
+                    for item in items:
+                        item.extra_data["region"] = "international"
+                    international_news.extend(items)
                 except Exception as e:
                     logger.warning(f"RSS collection failed for {source.get('name')}: {e}")
 
@@ -91,15 +105,20 @@ def collect_news() -> list[ContentItem]:
         logger.error(f"RSS news collection failed: {e}")
 
     # 중복 제거 (ID 기준)
-    seen_ids = set()
-    unique_news = []
-    for item in all_news:
-        if item.id not in seen_ids and not cache.is_sent(item.id, "news"):
-            seen_ids.add(item.id)
-            unique_news.append(item)
+    def dedupe(news_list):
+        seen_ids = set()
+        unique = []
+        for item in news_list:
+            if item.id not in seen_ids and not cache.is_sent(item.id, "news"):
+                seen_ids.add(item.id)
+                unique.append(item)
+        return unique
 
-    logger.info(f"Total unique news: {len(unique_news)}")
-    return unique_news
+    korean_news = dedupe(korean_news)
+    international_news = dedupe(international_news)
+
+    logger.info(f"Korean news: {len(korean_news)}, International: {len(international_news)}")
+    return {"korean": korean_news, "international": international_news}
 
 
 def collect_reports() -> list[ContentItem]:
@@ -137,8 +156,8 @@ def collect_reports() -> list[ContentItem]:
     return unique_reports
 
 
-def collect_youtube() -> list[ContentItem]:
-    """유튜브 영상 수집"""
+def collect_youtube() -> dict:
+    """유튜브 영상 수집 (한국/해외 분리)"""
     logger.info("=== Collecting YouTube Videos ===")
 
     try:
@@ -146,54 +165,71 @@ def collect_youtube() -> list[ContentItem]:
         videos = youtube_monitor.collect()
 
         # 중복 제거 (이미 전송된 영상 제외)
-        unique_videos = [
-            v for v in videos
+        korean_videos = [
+            v for v in videos.get("korean", [])
+            if not cache.is_sent(v.id, "youtube")
+        ]
+        intl_videos = [
+            v for v in videos.get("international", [])
             if not cache.is_sent(v.id, "youtube")
         ]
 
-        logger.info(f"Total new videos: {len(unique_videos)}")
-        return unique_videos
+        logger.info(f"Total new videos - Korean: {len(korean_videos)}, Intl: {len(intl_videos)}")
+        return {"korean": korean_videos, "international": intl_videos}
 
     except Exception as e:
         logger.error(f"YouTube collection failed: {e}")
-        return []
+        return {"korean": [], "international": []}
 
 
 def analyze_content(
-    news: list[ContentItem],
+    news: dict,
     reports: list[ContentItem],
-    videos: list[ContentItem],
+    videos: dict,
 ) -> dict:
     """콘텐츠 분석 및 요약"""
     logger.info("=== Analyzing Content ===")
 
+    korean_news = news.get("korean", [])
+    intl_news = news.get("international", [])
+    korean_videos = videos.get("korean", [])
+    intl_videos = videos.get("international", [])
+
     result = {
-        "news": news,
+        "korean_news": korean_news,
+        "international_news": intl_news,
         "news_summary": None,
         "reports": reports,
         "reports_summary": None,
-        "videos": videos,
+        "korean_videos": korean_videos,
+        "international_videos": intl_videos,
         "video_summaries": {},
     }
 
-    # 1. 뉴스 중요도 평가 및 필터링
-    if news:
-        scored_news = importance_scorer.filter_by_importance(news, min_score=0.3)
-        result["news"] = scored_news[:settings.MAX_NEWS_COUNT]
+    # 1. 국내 뉴스 중요도 평가
+    if korean_news:
+        scored = importance_scorer.filter_by_importance(korean_news, min_score=0.3)
+        result["korean_news"] = scored[:settings.MAX_NEWS_COUNT]
 
-        # AI 요약
+    # 2. 해외 뉴스 중요도 평가
+    if intl_news:
+        scored = importance_scorer.filter_by_importance(intl_news, min_score=0.3)
+        result["international_news"] = scored[:settings.MAX_NEWS_COUNT]
+
+    # 3. AI 요약 (국내 + 해외 합쳐서)
+    all_news = result["korean_news"] + result["international_news"]
+    if all_news:
         try:
-            result["news_summary"] = news_summarizer.summarize_news_batch(
-                result["news"][:15]
-            )
+            result["news_summary"] = news_summarizer.summarize_news_batch(all_news[:15])
         except Exception as e:
             logger.warning(f"News summarization failed: {e}")
 
-    # 2. 리포트 중요도 평가
+    # 4. 리포트 중요도 평가 - 중요도 높은 순
     if reports:
         scored_reports = importance_scorer.score_batch(reports)
         scored_reports.sort(key=lambda x: x.importance_score, reverse=True)
         result["reports"] = scored_reports[:settings.MAX_REPORTS_COUNT]
+        logger.info(f"Reports top scores: {[f'{r.title[:20]}({r.importance_score})' for r in result['reports'][:5]]}")
 
         # AI 요약
         try:
@@ -203,21 +239,35 @@ def analyze_content(
         except Exception as e:
             logger.warning(f"Report summarization failed: {e}")
 
-    # 3. 유튜브 중요도 평가 및 요약
-    if videos:
-        scored_videos = importance_scorer.score_batch(videos)
-        scored_videos.sort(key=lambda x: (x.priority.value, -x.importance_score))
-        result["videos"] = scored_videos[:settings.MAX_YOUTUBE_COUNT]
+    # 5. 유튜브 중요도 평가 및 요약 (한국) - 중요도 높은 순
+    if korean_videos:
+        scored = importance_scorer.score_batch(korean_videos)
+        scored.sort(key=lambda x: x.importance_score, reverse=True)
+        result["korean_videos"] = scored[:5]  # 한국 5개
+        logger.info(f"Korean YouTube top scores: {[f'{v.title[:20]}({v.importance_score})' for v in result['korean_videos']]}")
 
-        # 높은 우선순위 영상만 자막 요약
-        for video in result["videos"]:
-            if video.priority == Priority.HIGH:
-                try:
-                    summary = video_summarizer.summarize_video(video)
-                    if summary:
-                        result["video_summaries"][video.id] = summary
-                except Exception as e:
-                    logger.warning(f"Video summarization failed for {video.title[:30]}: {e}")
+        for video in result["korean_videos"]:
+            try:
+                summary = video_summarizer.summarize_video(video)
+                if summary:
+                    result["video_summaries"][video.id] = summary
+            except Exception as e:
+                logger.warning(f"Video summarization failed for {video.title[:30]}: {e}")
+
+    # 6. 유튜브 중요도 평가 및 요약 (해외) - 중요도 높은 순
+    if intl_videos:
+        scored = importance_scorer.score_batch(intl_videos)
+        scored.sort(key=lambda x: x.importance_score, reverse=True)
+        result["international_videos"] = scored[:5]  # 해외 5개
+        logger.info(f"Intl YouTube top scores: {[f'{v.title[:20]}({v.importance_score})' for v in result['international_videos']]}")
+
+        for video in result["international_videos"]:
+            try:
+                summary = video_summarizer.summarize_video(video)
+                if summary:
+                    result["video_summaries"][video.id] = summary
+            except Exception as e:
+                logger.warning(f"Video summarization failed for {video.title[:30]}: {e}")
 
     return result
 
@@ -229,27 +279,41 @@ def send_to_discord(analyzed: dict) -> bool:
     embeds = []
     now = datetime.now()
 
-    # 1. 뉴스 섹션
-    news = analyzed.get("news", [])
-    if news:
-        # 헤더 Embed
+    korean_news = analyzed.get("korean_news", [])[:10]
+    intl_news = analyzed.get("international_news", [])[:10]
+    all_news = korean_news + intl_news
+
+    # 1. 헤더 (AI 요약)
+    if all_news:
         header_embed = create_news_header_embed(
             date=now,
-            news_count=len(news),
+            news_count=len(all_news),
             summary=analyzed.get("news_summary"),
         )
         embeds.append(header_embed)
 
-        # 뉴스 목록 Embed
-        news_list_embed = create_news_list_embed(
-            items=news,
-            title="🇰🇷 국내 뉴스" if any("네이버" in n.source or "한국" in n.source for n in news) else "📰 주요 뉴스",
-            max_items=15,
+    # 2. 국내 뉴스 (10건)
+    if korean_news:
+        korean_embeds = create_news_list_embeds(
+            items=korean_news,
+            title=f"🇰🇷 국내 뉴스 ({len(korean_news)}건)",
+            items_per_embed=5,
+            color="e74c3c",
         )
-        embeds.append(news_list_embed)
+        embeds.extend(korean_embeds)
 
-    # 2. 리포트 섹션
-    reports = analyzed.get("reports", [])
+    # 3. 해외 뉴스 (10건)
+    if intl_news:
+        intl_embeds = create_news_list_embeds(
+            items=intl_news,
+            title=f"🇺🇸 해외 뉴스 ({len(intl_news)}건)",
+            items_per_embed=5,
+            color="3498db",
+        )
+        embeds.extend(intl_embeds)
+
+    # 4. 리포트 (10건)
+    reports = analyzed.get("reports", [])[:10]
     if reports:
         reports_header = create_reports_header_embed(
             report_count=len(reports),
@@ -263,31 +327,32 @@ def send_to_discord(analyzed: dict) -> bool:
         )
         embeds.append(reports_list)
 
-    # 3. 유튜브 섹션
-    videos = analyzed.get("videos", [])
+    # 5. 한국 유튜브 (5건)
+    korean_videos = analyzed.get("korean_videos", [])[:5]
     video_summaries = analyzed.get("video_summaries", {})
 
-    if videos:
-        youtube_header = create_youtube_header_embed(len(videos))
-        embeds.append(youtube_header)
+    if korean_videos:
+        korean_yt_list = create_youtube_list_embed(
+            items=korean_videos,
+            title=f"🇰🇷 한국 유튜브 ({len(korean_videos)}건)",
+            max_items=5,
+            video_summaries=video_summaries,
+        )
+        embeds.append(korean_yt_list)
 
-        # 높은 우선순위 영상은 개별 Embed
-        high_priority_videos = [v for v in videos if v.priority == Priority.HIGH]
-        other_videos = [v for v in videos if v.priority != Priority.HIGH]
+    # 6. 해외 유튜브 (5건)
+    intl_videos = analyzed.get("international_videos", [])[:5]
 
-        for video in high_priority_videos[:3]:
-            summary = video_summaries.get(video.id)
-            video_embed = create_youtube_item_embed(video, summary=summary)
-            embeds.append(video_embed)
+    if intl_videos:
+        intl_yt_list = create_youtube_list_embed(
+            items=intl_videos,
+            title=f"🇺🇸 해외 유튜브 ({len(intl_videos)}건)",
+            max_items=5,
+            video_summaries=video_summaries,
+        )
+        embeds.append(intl_yt_list)
 
-        # 나머지는 목록으로
-        if other_videos:
-            other_list = create_youtube_list_embed(
-                items=other_videos,
-                title="📺 기타 새 영상",
-                max_items=7,
-            )
-            embeds.append(other_list)
+    all_videos = korean_videos + intl_videos
 
     # Discord로 전송
     if not embeds:
@@ -301,9 +366,9 @@ def send_to_discord(analyzed: dict) -> bool:
 
     if success:
         # 캐시에 전송된 항목 기록
-        cache.mark_multiple_as_sent([n.id for n in news], "news")
+        cache.mark_multiple_as_sent([n.id for n in all_news], "news")
         cache.mark_multiple_as_sent([r.id for r in reports], "reports")
-        cache.mark_multiple_as_sent([v.id for v in videos], "youtube")
+        cache.mark_multiple_as_sent([v.id for v in all_videos], "youtube")
         logger.info(f"Successfully sent {len(embeds)} embeds to Discord")
     else:
         logger.error("Failed to send to Discord")
@@ -325,12 +390,13 @@ def main():
 
     try:
         # 1. 콘텐츠 수집
-        news = collect_news()
+        news = collect_news()  # {"korean": [...], "international": [...]}
         reports = collect_reports()
         videos = collect_youtube()
 
         # 수집된 콘텐츠가 없으면 종료
-        if not news and not reports and not videos:
+        all_news = news.get("korean", []) + news.get("international", [])
+        if not all_news and not reports and not videos:
             logger.info("No new content collected. Exiting.")
             return
 

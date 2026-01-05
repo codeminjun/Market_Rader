@@ -42,7 +42,10 @@ def create_news_header_embed(
         news_count: 뉴스 개수
         summary: AI 요약 결과
     """
-    date_str = date.strftime("%Y년 %m월 %d일 (%a)")
+    # 요일 한글 변환
+    weekdays = ["월", "화", "수", "목", "금", "토", "일"]
+    weekday_kr = weekdays[date.weekday()]
+    date_str = date.strftime(f"%Y년 %m월 %d일 ({weekday_kr})")
 
     embed = DiscordEmbed(
         title=f"📰 {date_str} 주식 뉴스 브리핑",
@@ -158,37 +161,69 @@ def create_news_list_embed(
     items: list[ContentItem],
     title: str = "📰 주요 뉴스",
     max_items: int = 10,
+    color: str = "3498db",
 ) -> DiscordEmbed:
+    """단일 뉴스 목록 Embed 생성 (하위 호환용)"""
+    embeds = create_news_list_embeds(items, title, max_items, color)
+    return embeds[0] if embeds else DiscordEmbed(title=title, color=color)
+
+
+def create_news_list_embeds(
+    items: list[ContentItem],
+    title: str = "📰 주요 뉴스",
+    items_per_embed: int = 15,
+    color: str = "3498db",
+) -> list[DiscordEmbed]:
     """
-    뉴스 목록 Embed 생성 (압축형)
+    뉴스 목록 Embed 여러 개 생성 (글자 수 제한 대응)
 
     Args:
         items: 뉴스 항목 리스트
         title: Embed 제목
-        max_items: 최대 표시 개수
+        items_per_embed: Embed당 최대 항목 수
+        color: Embed 색상
+
+    Returns:
+        DiscordEmbed 리스트
     """
-    embed = DiscordEmbed(
-        title=title,
-        color="3498db",
-    )
+    if not items:
+        return []
 
-    news_lines = []
-    for item in items[:max_items]:
-        emoji = get_importance_emoji(item.importance_score)
-        stars = get_priority_stars(item.priority)
+    embeds = []
+    total_items = len(items)
 
-        # 제목 길이 제한
-        item_title = item.title
-        if len(item_title) > 60:
-            item_title = item_title[:57] + "..."
+    for batch_idx, start in enumerate(range(0, total_items, items_per_embed)):
+        batch = items[start:start + items_per_embed]
 
-        line = f"{emoji} [{item_title}]({item.url})"
-        news_lines.append(line)
+        # 첫 번째 Embed에만 제목 표시, 나머지는 "계속"
+        if batch_idx == 0:
+            embed_title = title
+        else:
+            embed_title = f"{title} (계속)"
 
-    if news_lines:
-        embed.description = "\n".join(news_lines)
+        embed = DiscordEmbed(
+            title=embed_title,
+            color=color,
+        )
 
-    if len(items) > max_items:
-        embed.set_footer(text=f"외 {len(items) - max_items}건 더 있음")
+        news_lines = []
+        for i, item in enumerate(batch, start + 1):
+            emoji = get_importance_emoji(item.importance_score)
 
-    return embed
+            # 제목 길이 제한
+            item_title = item.title
+            if len(item_title) > 45:
+                item_title = item_title[:42] + "..."
+
+            # 출처 간략화
+            source_short = item.source.split("(")[0].strip()[:8]
+
+            line = f"{emoji} **{i}.** [{item_title}]({item.url})\n└ `{source_short}`"
+            news_lines.append(line)
+
+        if news_lines:
+            embed.description = "\n".join(news_lines)
+
+        embeds.append(embed)
+
+    return embeds

@@ -21,32 +21,47 @@ class YouTubeChannelMonitor(BaseCollector):
         super().__init__("YouTube", ContentType.YOUTUBE)
         self.channels = channels or self._load_channels()
 
-    def _load_channels(self) -> list[dict]:
-        """설정에서 채널 목록 로드"""
+    def _load_channels(self) -> dict:
+        """설정에서 채널 목록 로드 (지역별 분리)"""
         config = get_youtube_channels()
-        channels = []
+        channels = {"korean": [], "international": []}
 
         for region in ["korean", "international"]:
             if region in config:
                 for channel in config[region]:
                     if channel.get("enabled", True):
-                        channels.append(channel)
+                        channel["region"] = region
+                        channels[region].append(channel)
 
         return channels
 
-    def collect(self) -> list[ContentItem]:
-        """모든 채널에서 새 영상 수집"""
-        items = []
+    def collect(self) -> dict:
+        """모든 채널에서 새 영상 수집 (지역별 분리)"""
+        korean_videos = []
+        intl_videos = []
 
-        for channel in self.channels:
+        # 한국 채널
+        for channel in self.channels.get("korean", []):
             channel_items = self._collect_channel(channel)
-            items.extend(channel_items)
+            for item in channel_items:
+                item.extra_data["region"] = "korean"
+            korean_videos.extend(channel_items)
+
+        # 해외 채널
+        for channel in self.channels.get("international", []):
+            channel_items = self._collect_channel(channel)
+            for item in channel_items:
+                item.extra_data["region"] = "international"
+            intl_videos.extend(channel_items)
 
         # 최신순 정렬
-        items.sort(key=lambda x: x.published_at or datetime.min, reverse=True)
+        korean_videos.sort(key=lambda x: x.published_at or datetime.min, reverse=True)
+        intl_videos.sort(key=lambda x: x.published_at or datetime.min, reverse=True)
 
-        logger.info(f"Collected {len(items)} videos from YouTube channels")
-        return items
+        total = len(korean_videos) + len(intl_videos)
+        logger.info(f"Collected {total} videos (Korean: {len(korean_videos)}, Intl: {len(intl_videos)})")
+
+        return {"korean": korean_videos, "international": intl_videos}
 
     def _collect_channel(self, channel: dict) -> list[ContentItem]:
         """개별 채널 수집"""
@@ -65,17 +80,29 @@ class YouTubeChannelMonitor(BaseCollector):
             if feed.bozo and feed.bozo_exception:
                 logger.warning(f"RSS parse warning for {channel_name}: {feed.bozo_exception}")
 
-            # 최근 24시간 내 영상만 필터링 (설정 가능)
-            cutoff_time = datetime.now() - timedelta(hours=48)
+            # 삼프로TV는 10일 간격으로 최신 4개 스택
+            is_sampro = "삼프로" in channel_name
+            if is_sampro:
+                cutoff_time = datetime.now() - timedelta(days=10)
+                max_videos = 4
+            else:
+                cutoff_time = datetime.now() - timedelta(hours=48)
+                max_videos = 10
 
-            for entry in feed.entries[:10]:
+            collected_count = 0
+            for entry in feed.entries[:15]:
+                if collected_count >= max_videos:
+                    break
+
                 item = self._parse_video_entry(entry, channel)
                 if item:
                     # 최근 영상만 포함
                     if item.published_at and item.published_at.replace(tzinfo=None) > cutoff_time:
                         items.append(item)
+                        collected_count += 1
                     elif not item.published_at:
                         items.append(item)
+                        collected_count += 1
 
             logger.debug(f"Collected {len(items)} videos from {channel_name}")
 

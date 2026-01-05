@@ -5,38 +5,17 @@
 korean:
   # 삼프로TV - 경제/투자 전문 채널
   - name: "삼프로TV"
-    channel_id: "UClWzixhxjI0Fvr4IZJvZEQw"
+    channel_id: "UChlv4GSd7OQl3js-jkLOnFA"
     priority: "high"
     enabled: true
     description: "경제/투자 전문 유튜브 채널"
 
-  # 신사임당 - 재테크/경제
-  - name: "신사임당"
-    channel_id: "UCeq0ZHL-fvs9ASKU3RkI_Fg"
-    priority: "medium"
-    enabled: true
-    description: "재테크/경제 유튜브 채널"
-
   # 슈카월드 - 경제/시사
   - name: "슈카월드"
-    channel_id: "UCsJ6RuBiTVLvpLo-5P-QnGg"
+    channel_id: "UCsJ6RuBiTVWRX156FVbeaGg"
     priority: "high"
     enabled: true
     description: "경제/시사 유튜브 채널"
-
-  # 김작가TV - 투자/경제
-  - name: "김작가TV"
-    channel_id: "UC5kZePC5M8q1MiMWs66Mkrw"
-    priority: "medium"
-    enabled: true
-    description: "투자/경제 유튜브 채널"
-
-  # 머니투데이 증권
-  - name: "머니투데이"
-    channel_id: "UCb5VEjGf-sor2Bbd4MrG-dQ"
-    priority: "medium"
-    enabled: true
-    description: "머니투데이 뉴스 채널"
 
 international:
   # CNBC

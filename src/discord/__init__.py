@@ -7,6 +7,7 @@ from src.discord.embeds import (
     create_news_header_embed,
     create_news_item_embed,
     create_news_list_embed,
+    create_news_list_embeds,
     create_reports_header_embed,
     create_report_item_embed,
     create_reports_list_embed,
@@ -24,6 +25,7 @@ __all__ = [
     "create_news_header_embed",
     "create_news_item_embed",
     "create_news_list_embed",
+    "create_news_list_embeds",
     # Report Embeds
     "create_reports_header_embed",
     "create_report_item_embed",

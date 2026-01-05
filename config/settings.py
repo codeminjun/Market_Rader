@@ -24,7 +24,7 @@ class Settings:
 
     # Groq API
     GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
-    GROQ_MODEL: str = "llama-3.1-70b-versatile"
+    GROQ_MODEL: str = "llama-3.3-70b-versatile"
 
     # NewsAPI (Optional)
     NEWSAPI_KEY: str = os.getenv("NEWSAPI_KEY", "")
@@ -37,7 +37,7 @@ class Settings:
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
 
     # News Settings
-    MAX_NEWS_COUNT: int = 20
+    MAX_NEWS_COUNT: int = 10  # 국내/해외 각각 10건
     MAX_REPORTS_COUNT: int = 10
     MAX_YOUTUBE_COUNT: int = 10
 

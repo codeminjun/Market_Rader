@@ -81,7 +81,8 @@ class NaverFinanceNewsCollector(BaseCollector):
             title = title_elem.get_text(strip=True)
             href = title_elem.get("href", "")
 
-            if not href:
+            # 제목이나 링크가 없으면 스킵
+            if not href or not title:
                 return None
 
             # 전체 URL 생성

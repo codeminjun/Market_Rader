@@ -5,6 +5,7 @@ from src.discord.embeds.news_embed import (
     create_news_header_embed,
     create_news_item_embed,
     create_news_list_embed,
+    create_news_list_embeds,
     get_importance_emoji,
     get_priority_stars,
 )
@@ -25,6 +26,7 @@ __all__ = [
     "create_news_header_embed",
     "create_news_item_embed",
     "create_news_list_embed",
+    "create_news_list_embeds",
     "get_importance_emoji",
     "get_priority_stars",
     # Reports
