@@ -1,0 +1,90 @@
+# 뉴스 소스 설정
+
+news:
+  korean:
+    # 네이버 금융 뉴스
+    - name: "네이버 금융"
+      type: "naver"
+      enabled: true
+      categories:
+        - "stock"      # 증시
+        - "economy"    # 경제
+        - "world"      # 국제
+
+    # 한국 경제 뉴스 RSS
+    - name: "한국경제"
+      type: "rss"
+      url: "https://www.hankyung.com/feed/stock"
+      enabled: true
+
+    - name: "매일경제"
+      type: "rss"
+      url: "https://www.mk.co.kr/rss/30100041/"
+      enabled: true
+
+    - name: "연합인포맥스"
+      type: "rss"
+      url: "https://news.einfomax.co.kr/rss/S1N1.xml"
+      enabled: true
+
+  international:
+    # Reuters RSS
+    - name: "Reuters Business"
+      type: "rss"
+      url: "https://www.reutersagency.com/feed/?best-topics=business-finance"
+      enabled: true
+
+    # Yahoo Finance RSS
+    - name: "Yahoo Finance"
+      type: "rss"
+      url: "https://finance.yahoo.com/news/rssindex"
+      enabled: true
+
+    # CNBC RSS
+    - name: "CNBC"
+      type: "rss"
+      url: "https://www.cnbc.com/id/100003114/device/rss/rss.html"
+      enabled: true
+
+reports:
+  # 네이버 증권 리서치
+  - name: "네이버 증권 리서치"
+    type: "naver_research"
+    url: "https://finance.naver.com/research/"
+    enabled: true
+    categories:
+      - "invest"       # 투자정보
+      - "company"      # 기업분석
+      - "industry"     # 산업분석
+      - "market"       # 시황
+
+  # Seeking Alpha (해외)
+  - name: "Seeking Alpha"
+    type: "rss"
+    url: "https://seekingalpha.com/market_currents.xml"
+    enabled: true
+
+# 중요 키워드 (중요도 판단에 사용)
+important_keywords:
+  high:
+    - "금리"
+    - "FOMC"
+    - "연준"
+    - "Fed"
+    - "기준금리"
+    - "실적발표"
+    - "어닝"
+    - "IPO"
+    - "상장"
+    - "인수"
+    - "합병"
+    - "M&A"
+  medium:
+    - "전망"
+    - "분석"
+    - "목표가"
+    - "투자의견"
+    - "매수"
+    - "매도"
+    - "상향"
+    - "하향"

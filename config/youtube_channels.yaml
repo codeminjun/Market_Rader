@@ -1,0 +1,78 @@
+# 유튜브 채널 설정
+# channel_id: 유튜브 채널 ID (채널 URL에서 확인 가능)
+# RSS URL 형식: https://www.youtube.com/feeds/videos.xml?channel_id=CHANNEL_ID
+
+korean:
+  # 삼프로TV - 경제/투자 전문 채널
+  - name: "삼프로TV"
+    channel_id: "UClWzixhxjI0Fvr4IZJvZEQw"
+    priority: "high"
+    enabled: true
+    description: "경제/투자 전문 유튜브 채널"
+
+  # 신사임당 - 재테크/경제
+  - name: "신사임당"
+    channel_id: "UCeq0ZHL-fvs9ASKU3RkI_Fg"
+    priority: "medium"
+    enabled: true
+    description: "재테크/경제 유튜브 채널"
+
+  # 슈카월드 - 경제/시사
+  - name: "슈카월드"
+    channel_id: "UCsJ6RuBiTVLvpLo-5P-QnGg"
+    priority: "high"
+    enabled: true
+    description: "경제/시사 유튜브 채널"
+
+  # 김작가TV - 투자/경제
+  - name: "김작가TV"
+    channel_id: "UC5kZePC5M8q1MiMWs66Mkrw"
+    priority: "medium"
+    enabled: true
+    description: "투자/경제 유튜브 채널"
+
+  # 머니투데이 증권
+  - name: "머니투데이"
+    channel_id: "UCb5VEjGf-sor2Bbd4MrG-dQ"
+    priority: "medium"
+    enabled: true
+    description: "머니투데이 뉴스 채널"
+
+international:
+  # CNBC
+  - name: "CNBC"
+    channel_id: "UCvJJ_dzjViJCoLf5uKUTwoA"
+    priority: "high"
+    enabled: true
+    description: "CNBC 경제 뉴스"
+
+  # Bloomberg Markets and Finance
+  - name: "Bloomberg"
+    channel_id: "UCIALMKvObZNtJ6AmdCLP7Lg"
+    priority: "high"
+    enabled: true
+    description: "Bloomberg 금융 뉴스"
+
+  # Yahoo Finance
+  - name: "Yahoo Finance"
+    channel_id: "UCEAZeUIeJs0IjQiqTCdVSIg"
+    priority: "medium"
+    enabled: true
+    description: "Yahoo Finance 뉴스"
+
+# 우선순위별 처리 방식
+priority_settings:
+  high:
+    summarize: true           # 자막 기반 요약 수행
+    always_notify: true       # 항상 알림
+    max_summary_length: 300   # 요약 최대 길이
+
+  medium:
+    summarize: false          # 제목/설명만 표시
+    always_notify: true       # 항상 알림
+    max_summary_length: 150
+
+  low:
+    summarize: false
+    always_notify: false      # 중요도 높을 때만 알림
+    max_summary_length: 100
