@@ -7,6 +7,7 @@ from typing import Optional
 from src.collectors.base import ContentItem, Priority
 from src.analyzer.groq_client import groq_client
 from src.utils.logger import logger
+from src.utils.constants import ImportanceThresholds
 from config.settings import get_news_sources
 
 
@@ -16,6 +17,53 @@ class ImportanceScorer:
     SYSTEM_PROMPT = """당신은 금융 뉴스 편집자입니다.
 뉴스와 콘텐츠의 투자 관련 중요도를 평가합니다.
 객관적이고 일관된 기준으로 평가합니다."""
+
+    # 언론사별 가중치 (사용자 선호도 반영)
+    SOURCE_WEIGHTS = {
+        "한국경제": 0.10,      # 선호 언론사: +10%
+        "연합인포맥스": 0.05,  # 중립
+        "매일경제": -0.05,     # 상대적 낮은 우선순위: -5%
+    }
+
+    # 커버드콜/배당 키워드 (최최우선 가중치: +0.30)
+    COVERED_CALL_KEYWORDS = [
+        # 커버드콜
+        "커버드콜", "covered call", "콜옵션", "프리미엄",
+        # 배당 관련
+        "배당", "dividend", "배당주", "배당금", "배당수익", "배당성장",
+        "고배당", "월배당", "분기배당", "연배당", "배당락",
+        "배당귀족", "배당킹", "배당챔피언", "배당ETF", "인컴",
+        # 대표 배당 ETF
+        "SCHD", "JEPI", "JEPQ", "QYLD", "XYLD", "DIVO",
+        "TIGER 미국배당", "KODEX 배당", "ARIRANG 고배당",
+        # 리츠/인컴
+        "리츠", "REITs", "부동산투자", "인컴펀드",
+    ]
+
+    # 산업뉴스 키워드 (최우선 가중치: +0.20)
+    INDUSTRY_KEYWORDS = [
+        # 반도체/IT
+        "반도체", "파운드리", "HBM", "메모리", "D램", "낸드", "AP", "GPU", "NPU",
+        "삼성전자", "SK하이닉스", "인텔", "엔비디아", "TSMC", "AMD", "퀄컴",
+        # 2차전지/배터리
+        "2차전지", "배터리", "리튬", "양극재", "음극재", "전해질", "분리막",
+        "LG에너지솔루션", "삼성SDI", "SK온", "CATL", "파나소닉",
+        "전기차", "EV", "전고체",
+        # AI/소프트웨어
+        "AI", "인공지능", "LLM", "생성형", "챗GPT", "클라우드", "데이터센터",
+        # 바이오/헬스케어
+        "바이오", "신약", "임상", "FDA", "셀트리온", "삼성바이오", "SK바이오",
+        # 자동차
+        "현대차", "기아", "테슬라", "자율주행", "전기차", "수소차",
+        # 조선/해운
+        "조선", "HD한국조선", "삼성중공업", "한화오션", "LNG선", "컨테이너선",
+        # 철강/화학
+        "포스코", "철강", "화학", "석유화학", "정유", "LG화학",
+        # 방산/항공
+        "방산", "한화에어로", "KAI", "LIG넥스원", "무기", "수출",
+        # 금융
+        "은행", "증권", "보험", "KB", "신한", "하나", "우리",
+    ]
 
     # 중요 키워드 (설정에서 로드)
     HIGH_IMPORTANCE_KEYWORDS = [
@@ -27,10 +75,6 @@ class ImportanceScorer:
         "파산", "부도", "긴급", "급등", "급락", "폭락", "폭등", "사상최고",
         # 주요 지수
         "코스피", "코스닥", "나스닥", "S&P500", "다우", "니케이",
-        # 주요 종목
-        "삼성전자", "SK하이닉스", "엔비디아", "테슬라", "애플", "마이크로소프트",
-        # 섹터
-        "반도체", "AI", "2차전지", "배터리", "바이오",
         # 시사/정책
         "트럼프", "관세", "무역전쟁", "환율", "달러",
     ]
@@ -52,12 +96,20 @@ class ImportanceScorer:
         self.client = groq_client
         self._load_keywords_from_config()
 
+    def _check_keywords(self, text_lower: str, keywords: list) -> bool:
+        """키워드 리스트에서 매칭 여부 확인"""
+        return any(keyword.lower() in text_lower for keyword in keywords)
+
     def _load_keywords_from_config(self):
         """설정에서 키워드 로드"""
         try:
             config = get_news_sources()
             keywords = config.get("important_keywords", {})
 
+            if "covered_call" in keywords:
+                self.COVERED_CALL_KEYWORDS.extend(keywords["covered_call"])
+            if "industry" in keywords:
+                self.INDUSTRY_KEYWORDS.extend(keywords["industry"])
             if "high" in keywords:
                 self.HIGH_IMPORTANCE_KEYWORDS.extend(keywords["high"])
             if "medium" in keywords:
@@ -82,21 +134,32 @@ class ImportanceScorer:
         text = f"{item.title} {item.description or ''}"
         text_lower = text.lower()
 
-        for keyword in self.HIGH_IMPORTANCE_KEYWORDS:
-            if keyword.lower() in text_lower:
-                score += 0.15
-                break  # 하나만 매칭되어도 점수 부여
+        # 커버드콜/배당 뉴스 체크 (최최우선 가중치)
+        if self._check_keywords(text_lower, self.COVERED_CALL_KEYWORDS):
+            score += ImportanceThresholds.COVERED_CALL_WEIGHT
+            item.extra_data["is_covered_call"] = True
 
-        for keyword in self.MEDIUM_IMPORTANCE_KEYWORDS:
-            if keyword.lower() in text_lower:
-                score += 0.08
-                break
+        # 산업 키워드 (최우선 가중치)
+        if self._check_keywords(text_lower, self.INDUSTRY_KEYWORDS):
+            score += ImportanceThresholds.INDUSTRY_WEIGHT
+
+        # 중요 키워드
+        if self._check_keywords(text_lower, self.HIGH_IMPORTANCE_KEYWORDS):
+            score += ImportanceThresholds.HIGH_KEYWORD_WEIGHT
+
+        # 일반 키워드
+        if self._check_keywords(text_lower, self.MEDIUM_IMPORTANCE_KEYWORDS):
+            score += ImportanceThresholds.MEDIUM_KEYWORD_WEIGHT
 
         # 우선순위 기반 조정
         if item.priority == Priority.HIGH:
-            score += 0.1
+            score += ImportanceThresholds.HIGH_PRIORITY_WEIGHT
         elif item.priority == Priority.LOW:
-            score -= 0.1
+            score += ImportanceThresholds.LOW_PRIORITY_WEIGHT
+
+        # 언론사 가중치 적용 (사용자 선호도 반영)
+        source_weight = self.SOURCE_WEIGHTS.get(item.source, 0.0)
+        score += source_weight
 
         # 점수 범위 제한
         score = max(0.0, min(1.0, score))
@@ -117,9 +180,9 @@ class ImportanceScorer:
             item.importance_score = self.score_item(item)
 
             # 점수에 따라 우선순위 업데이트
-            if item.importance_score >= 0.7:
+            if item.importance_score >= ImportanceThresholds.HIGH_PRIORITY:
                 item.priority = Priority.HIGH
-            elif item.importance_score >= 0.5:
+            elif item.importance_score >= ImportanceThresholds.MEDIUM_PRIORITY:
                 item.priority = Priority.MEDIUM
             else:
                 item.priority = Priority.LOW
@@ -167,7 +230,7 @@ class ImportanceScorer:
     def filter_by_importance(
         self,
         items: list[ContentItem],
-        min_score: float = 0.4,
+        min_score: float = ImportanceThresholds.MIN_SCORE,
     ) -> list[ContentItem]:
         """
         중요도 기준 필터링

@@ -4,6 +4,7 @@
 from discord_webhook import DiscordEmbed
 
 from src.collectors.base import ContentItem
+from src.utils.constants import EmbedColors
 
 
 def create_reports_header_embed(
@@ -19,7 +20,7 @@ def create_reports_header_embed(
     """
     embed = DiscordEmbed(
         title=f"📊 애널리스트 리포트 ({report_count}건)",
-        color="9b59b6",  # 보라색
+        color=EmbedColors.REPORTS,
     )
 
     if summary:
@@ -63,7 +64,7 @@ def create_report_item_embed(item: ContentItem) -> DiscordEmbed:
     embed = DiscordEmbed(
         title=f"📄 {title}",
         url=item.url,
-        color="9b59b6",  # 보라색
+        color=EmbedColors.REPORTS,
     )
 
     # 출처 (증권사)
@@ -111,13 +112,30 @@ def get_importance_indicator(score: float) -> str:
         return "🟡"
 
 
+def format_target_price(item: ContentItem) -> str:
+    """목표가 정보 포맷팅"""
+    target_price = item.extra_data.get("target_price")
+    opinion = item.extra_data.get("opinion", "")
+    ticker = item.extra_data.get("ticker")
+
+    if target_price:
+        # 국내: 원화
+        if ticker is None:
+            return f"🎯{target_price:,}원" + (f" ({opinion})" if opinion else "")
+        # 해외: 달러
+        else:
+            return f"🎯${target_price:,.0f}" if isinstance(target_price, (int, float)) else ""
+
+    return ""
+
+
 def create_reports_list_embed(
     items: list[ContentItem],
     title: str = "📊 애널리스트 리포트",
     max_items: int = 10,
 ) -> DiscordEmbed:
     """
-    리포트 목록 Embed 생성 (날짜, 중요도 포함)
+    리포트 목록 Embed 생성 (날짜, 중요도, 목표가 포함)
 
     Args:
         items: 리포트 항목 리스트
@@ -126,13 +144,17 @@ def create_reports_list_embed(
     """
     embed = DiscordEmbed(
         title=title,
-        color="9b59b6",
+        color=EmbedColors.REPORTS,
     )
 
     report_lines = []
     for item in items[:max_items]:
         # 중요도 표시
         importance = get_importance_indicator(item.importance_score)
+
+        # 시총 50위 표시
+        is_top50 = item.extra_data.get("is_top50", False)
+        top50_badge = "⭐ " if is_top50 else ""
 
         # 날짜
         date_str = ""
@@ -144,15 +166,21 @@ def create_reports_list_embed(
         if broker and len(broker) > 6:
             broker = broker[:5] + ".."
 
-        # 종목명
+        # 종목명/티커
         stock = item.extra_data.get("stock_name", "")
-        if stock and len(stock) > 8:
+        ticker = item.extra_data.get("ticker")
+        if ticker:
+            stock = f"${ticker}"
+        elif stock and len(stock) > 8:
             stock = stock[:7] + ".."
+
+        # 목표가 정보
+        target_info = format_target_price(item)
 
         # 제목 길이 제한
         item_title = item.title
-        if len(item_title) > 35:
-            item_title = item_title[:32] + "..."
+        if len(item_title) > 40:
+            item_title = item_title[:37] + "..."
 
         # 태그 구성
         tags = []
@@ -162,9 +190,11 @@ def create_reports_list_embed(
             tags.append(broker)
         if stock:
             tags.append(stock)
+        if target_info:
+            tags.append(target_info)
         tag_str = " | ".join(tags) if tags else ""
 
-        line = f"{importance} [{item_title}]({item.url})"
+        line = f"{importance} {top50_badge}[{item_title}]({item.url})"
         if tag_str:
             line += f"\n  └ `{tag_str}`"
 

@@ -4,6 +4,7 @@
 from discord_webhook import DiscordEmbed
 
 from src.collectors.base import ContentItem, Priority
+from src.utils.constants import EmbedColors
 
 
 def get_priority_indicator(priority: Priority) -> str:
@@ -26,7 +27,7 @@ def create_youtube_header_embed(video_count: int) -> DiscordEmbed:
     embed = DiscordEmbed(
         title=f"🎬 새 유튜브 영상 ({video_count}건)",
         description="구독 중인 채널의 새 영상입니다.",
-        color="e74c3c",  # 빨간색 (YouTube 색상)
+        color=EmbedColors.YOUTUBE,
     )
 
     return embed
@@ -54,7 +55,7 @@ def create_youtube_item_embed(
     embed = DiscordEmbed(
         title=f"🎬 {title}",
         url=item.url,
-        color="e74c3c",  # YouTube 빨간색
+        color=EmbedColors.YOUTUBE,
     )
 
     # 채널명
@@ -138,7 +139,7 @@ def create_youtube_list_embed(
     """
     embed = DiscordEmbed(
         title=title,
-        color="e74c3c",
+        color=EmbedColors.YOUTUBE,
     )
 
     video_summaries = video_summaries or {}
@@ -165,13 +166,21 @@ def create_youtube_list_embed(
 
         line = f"{priority_emoji} **{channel}** [{item_title}]({item.url})"
 
-        # 핵심 포인트 추가 (있을 경우)
+        # 요약 추가 (삼프로TV 등 summarize=true 채널)
         summary = video_summaries.get(item.id)
-        if summary and "key_points" in summary and summary["key_points"]:
-            key_point = summary["key_points"][0][:60]
-            if len(summary["key_points"][0]) > 60:
-                key_point += "..."
-            line += f"\n  └ 💡 {key_point}"
+        if summary:
+            # 간단 요약 우선 표시
+            if "summary" in summary and summary["summary"]:
+                short_summary = summary["summary"][:150]
+                if len(summary["summary"]) > 150:
+                    short_summary += "..."
+                line += f"\n  └ 📝 {short_summary}"
+            # 요약 없으면 핵심 포인트
+            elif "key_points" in summary and summary["key_points"]:
+                key_point = summary["key_points"][0][:100]
+                if len(summary["key_points"][0]) > 100:
+                    key_point += "..."
+                line += f"\n  └ 💡 {key_point}"
 
         video_lines.append(line)
 
@@ -202,7 +211,7 @@ def create_youtube_quick_embed(
         title=f"🎬 {item.source}",
         description=f"**{title}**\n\n{priority_text}",
         url=item.url,
-        color="e74c3c",
+        color=EmbedColors.YOUTUBE,
     )
 
     if quick_summary:

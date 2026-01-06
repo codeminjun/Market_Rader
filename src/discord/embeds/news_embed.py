@@ -5,10 +5,15 @@ from datetime import datetime
 from discord_webhook import DiscordEmbed
 
 from src.collectors.base import ContentItem, Priority
+from src.utils.constants import EmbedColors
 
 
-def get_importance_emoji(score: float) -> str:
-    """중요도 점수에 따른 이모지"""
+def get_importance_emoji(score: float, item: "ContentItem" = None) -> str:
+    """중요도 점수에 따른 이모지 (커버드콜/배당 특별 강조)"""
+    # 커버드콜/배당 뉴스 특별 강조
+    if item and item.extra_data.get("is_covered_call"):
+        return "💰🔥"  # 배당/커버드콜 강조
+
     if score >= 0.8:
         return "🔴"  # 긴급
     elif score >= 0.6:
@@ -17,6 +22,13 @@ def get_importance_emoji(score: float) -> str:
         return "🟡"  # 일반
     else:
         return "⚪"  # 참고
+
+
+def get_covered_call_label(item: "ContentItem") -> str:
+    """커버드콜/배당 뉴스 라벨"""
+    if item.extra_data.get("is_covered_call"):
+        return " **[배당/커버드콜]**"
+    return ""
 
 
 def get_priority_stars(priority: Priority) -> str:
@@ -33,6 +45,7 @@ def create_news_header_embed(
     date: datetime,
     news_count: int,
     summary: dict = None,
+    title_override: str = None,
 ) -> DiscordEmbed:
     """
     뉴스 헤더 Embed 생성
@@ -41,16 +54,23 @@ def create_news_header_embed(
         date: 날짜
         news_count: 뉴스 개수
         summary: AI 요약 결과
+        title_override: 커스텀 제목 (시간대별 분기용)
     """
     # 요일 한글 변환
     weekdays = ["월", "화", "수", "목", "금", "토", "일"]
     weekday_kr = weekdays[date.weekday()]
     date_str = date.strftime(f"%Y년 %m월 %d일 ({weekday_kr})")
 
+    # 제목 설정 (오버라이드 또는 기본)
+    if title_override:
+        title = f"{title_override} - {date_str}"
+    else:
+        title = f"📰 {date_str} 주식 뉴스 브리핑"
+
     embed = DiscordEmbed(
-        title=f"📰 {date_str} 주식 뉴스 브리핑",
+        title=title,
         description=f"오늘의 주요 뉴스 {news_count}건을 정리했습니다.",
-        color="3498db",  # 파란색
+        color=EmbedColors.DEFAULT,
     )
 
     if summary:
@@ -104,11 +124,11 @@ def create_news_item_embed(
 
     # 색상 설정
     color_map = {
-        Priority.HIGH: "e74c3c",    # 빨강
-        Priority.MEDIUM: "f39c12",  # 주황
-        Priority.LOW: "95a5a6",     # 회색
+        Priority.HIGH: EmbedColors.NEWS_KOREAN,
+        Priority.MEDIUM: "f39c12",
+        Priority.LOW: "95a5a6",
     }
-    color = color_map.get(item.priority, "3498db")
+    color = color_map.get(item.priority, EmbedColors.DEFAULT)
 
     embed = DiscordEmbed(
         title=title,
@@ -208,7 +228,8 @@ def create_news_list_embeds(
 
         news_lines = []
         for i, item in enumerate(batch, start + 1):
-            emoji = get_importance_emoji(item.importance_score)
+            emoji = get_importance_emoji(item.importance_score, item)
+            covered_call_label = get_covered_call_label(item)
 
             # 제목 길이 제한
             item_title = item.title
@@ -218,7 +239,7 @@ def create_news_list_embeds(
             # 출처 간략화
             source_short = item.source.split("(")[0].strip()[:8]
 
-            line = f"{emoji} **{i}.** [{item_title}]({item.url})\n└ `{source_short}`"
+            line = f"{emoji} **{i}.** [{item_title}]({item.url}){covered_call_label}\n└ `{source_short}`"
             news_lines.append(line)
 
         if news_lines:
