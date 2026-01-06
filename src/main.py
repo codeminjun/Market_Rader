@@ -3,6 +3,7 @@ Market Rader - 주식 뉴스 디스코드 봇
 메인 실행 파일
 """
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from src.collectors.news import (
     NaverFinanceNewsCollector,
     RSSNewsCollector,
     create_rss_collectors,
+    InvestingNewsCollector,
 )
 from src.collectors.reports import NaverResearchCollector, SeekingAlphaCollector
 from src.collectors.youtube import YouTubeChannelMonitor, transcript_extractor
@@ -55,54 +57,74 @@ def validate_settings() -> bool:
 
 
 def collect_news() -> dict:
-    """뉴스 수집 (국내/해외 분리)"""
-    logger.info("=== Collecting News ===")
+    """뉴스 수집 (국내/해외 분리, 병렬 처리)"""
+    from src.utils.constants import get_priority_from_string
+
+    logger.info("=== Collecting News (Parallel) ===")
     korean_news = []
     international_news = []
 
-    # 1. 네이버 금융 뉴스 (국내)
-    try:
-        naver_collector = NaverFinanceNewsCollector(categories=["stock", "economy"])
-        naver_news = naver_collector.collect()
-        for item in naver_news:
+    # 수집 태스크 정의
+    def collect_naver():
+        """네이버 금융 뉴스"""
+        collector = NaverFinanceNewsCollector(categories=["stock", "economy"])
+        items = collector.collect()
+        for item in items:
             item.extra_data["region"] = "korean"
-        korean_news.extend(naver_news)
-        logger.info(f"Naver Finance: {len(naver_news)} items")
-    except Exception as e:
-        logger.error(f"Naver news collection failed: {e}")
+        return ("korean", items, "Naver Finance")
 
-    # 2. RSS 뉴스
-    try:
-        news_config = get_news_sources()
-        korean_sources = news_config.get("news", {}).get("korean", [])
-        intl_sources = news_config.get("news", {}).get("international", [])
+    def collect_investing():
+        """인베스팅닷컴 인기 뉴스 (현재 차단됨 - 비활성화)"""
+        # 인베스팅닷컴이 봇 차단 중이므로 빈 리스트 반환
+        # TODO: 다른 인기 뉴스 소스로 대체 필요
+        return ("korean", [], "Investing.com (disabled)")
 
-        # 국내 RSS
+    def collect_rss(source: dict, region: str):
+        """RSS 뉴스 수집"""
+        priority = get_priority_from_string(source.get("priority", "medium"))
+        collector = RSSNewsCollector(
+            name=source["name"],
+            url=source["url"],
+            priority=priority,
+        )
+        items = collector.collect()
+        for item in items:
+            item.extra_data["region"] = region
+        return (region, items, source["name"])
+
+    # RSS 소스 로드
+    news_config = get_news_sources()
+    korean_sources = news_config.get("news", {}).get("korean", [])
+    intl_sources = news_config.get("news", {}).get("international", [])
+
+    # 모든 수집 태스크 병렬 실행
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = []
+
+        # 기본 수집기
+        futures.append(executor.submit(collect_naver))
+        futures.append(executor.submit(collect_investing))
+
+        # RSS 수집기들
         for source in korean_sources:
             if source.get("type") == "rss" and source.get("enabled", True):
-                try:
-                    collector = RSSNewsCollector(name=source["name"], url=source["url"])
-                    items = collector.collect()
-                    for item in items:
-                        item.extra_data["region"] = "korean"
-                    korean_news.extend(items)
-                except Exception as e:
-                    logger.warning(f"RSS collection failed for {source.get('name')}: {e}")
+                futures.append(executor.submit(collect_rss, source, "korean"))
 
-        # 해외 RSS
         for source in intl_sources:
             if source.get("type") == "rss" and source.get("enabled", True):
-                try:
-                    collector = RSSNewsCollector(name=source["name"], url=source["url"])
-                    items = collector.collect()
-                    for item in items:
-                        item.extra_data["region"] = "international"
-                    international_news.extend(items)
-                except Exception as e:
-                    logger.warning(f"RSS collection failed for {source.get('name')}: {e}")
+                futures.append(executor.submit(collect_rss, source, "international"))
 
-    except Exception as e:
-        logger.error(f"RSS news collection failed: {e}")
+        # 결과 수집
+        for future in as_completed(futures):
+            try:
+                region, items, source_name = future.result()
+                if region == "korean":
+                    korean_news.extend(items)
+                else:
+                    international_news.extend(items)
+                logger.info(f"{source_name}: {len(items)} items")
+            except Exception as e:
+                logger.error(f"News collection failed: {e}")
 
     # 중복 제거 (ID 기준)
     def dedupe(news_list):
@@ -122,27 +144,35 @@ def collect_news() -> dict:
 
 
 def collect_reports() -> list[ContentItem]:
-    """애널리스트 리포트 수집"""
-    logger.info("=== Collecting Reports ===")
+    """애널리스트 리포트 수집 (병렬 처리)"""
+    logger.info("=== Collecting Reports (Parallel) ===")
     all_reports = []
 
-    # 1. 네이버 증권 리서치
-    try:
-        naver_research = NaverResearchCollector(categories=["invest", "company", "market"])
-        reports = naver_research.collect()
-        all_reports.extend(reports)
-        logger.info(f"Naver Research: {len(reports)} items")
-    except Exception as e:
-        logger.error(f"Naver research collection failed: {e}")
+    def collect_naver_research():
+        """네이버 증권 리서치"""
+        collector = NaverResearchCollector(categories=["invest", "company", "market"])
+        return collector.collect()
 
-    # 2. Seeking Alpha
-    try:
-        sa_collector = SeekingAlphaCollector()
-        sa_reports = sa_collector.collect()
-        all_reports.extend(sa_reports)
-        logger.info(f"Seeking Alpha: {len(sa_reports)} items")
-    except Exception as e:
-        logger.warning(f"Seeking Alpha collection failed: {e}")
+    def collect_seeking_alpha():
+        """Seeking Alpha"""
+        collector = SeekingAlphaCollector()
+        return collector.collect()
+
+    # 병렬 수집
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = {
+            executor.submit(collect_naver_research): "Naver Research",
+            executor.submit(collect_seeking_alpha): "Seeking Alpha",
+        }
+
+        for future in as_completed(futures):
+            source_name = futures[future]
+            try:
+                reports = future.result()
+                all_reports.extend(reports)
+                logger.info(f"{source_name}: {len(reports)} items")
+            except Exception as e:
+                logger.error(f"{source_name} collection failed: {e}")
 
     # 중복 제거
     seen_ids = set()
@@ -272,15 +302,44 @@ def analyze_content(
     return result
 
 
+def get_schedule_type() -> tuple[str, str]:
+    """
+    현재 실행 시간에 따른 스케줄 타입 반환
+
+    Returns:
+        (schedule_type, header_title)
+    """
+    hour = datetime.now().hour
+    if 6 <= hour <= 8:
+        return ("morning", "📰 전일 마감 후 주요 뉴스")
+    elif 11 <= hour <= 13:
+        return ("noon", "📰 오전장 주요 뉴스")
+    return ("manual", "📰 주식 뉴스 브리핑")
+
+
 def send_to_discord(analyzed: dict) -> bool:
     """Discord로 전송"""
+    from src.utils.constants import NewsSettings, EmbedColors
+
     logger.info("=== Sending to Discord ===")
 
     embeds = []
     now = datetime.now()
+    schedule_type, header_title = get_schedule_type()
 
-    korean_news = analyzed.get("korean_news", [])[:10]
-    intl_news = analyzed.get("international_news", [])[:10]
+    # 스케줄 타입에 따른 콘텐츠 설정
+    is_noon = schedule_type == "noon"
+
+    if is_noon:
+        # 오후 12시: 한국 뉴스 위주 (최대 15개, 중요도 순)
+        korean_news = analyzed.get("korean_news", [])[:NewsSettings.NOON_MAX_KOREAN_NEWS]
+        intl_news = []  # 해외 뉴스 제외
+        logger.info(f"Noon schedule: Korean news only ({len(korean_news)} items)")
+    else:
+        # 오전 7시/수동: 전체 콘텐츠
+        korean_news = analyzed.get("korean_news", [])[:NewsSettings.MAX_KOREAN_NEWS]
+        intl_news = analyzed.get("international_news", [])[:NewsSettings.MAX_INTL_NEWS]
+
     all_news = korean_news + intl_news
 
     # 1. 헤더 (AI 요약)
@@ -289,68 +348,76 @@ def send_to_discord(analyzed: dict) -> bool:
             date=now,
             news_count=len(all_news),
             summary=analyzed.get("news_summary"),
+            title_override=header_title,
         )
         embeds.append(header_embed)
 
-    # 2. 국내 뉴스 (10건)
+    # 2. 국내 뉴스
     if korean_news:
         korean_embeds = create_news_list_embeds(
             items=korean_news,
             title=f"🇰🇷 국내 뉴스 ({len(korean_news)}건)",
             items_per_embed=5,
-            color="e74c3c",
+            color=EmbedColors.NEWS_KOREAN,
         )
         embeds.extend(korean_embeds)
 
-    # 3. 해외 뉴스 (10건)
-    if intl_news:
+    # 3. 해외 뉴스 (점심 스케줄에서는 건너뜀)
+    if intl_news and not is_noon:
         intl_embeds = create_news_list_embeds(
             items=intl_news,
             title=f"🇺🇸 해외 뉴스 ({len(intl_news)}건)",
             items_per_embed=5,
-            color="3498db",
+            color=EmbedColors.NEWS_INTL,
         )
         embeds.extend(intl_embeds)
 
-    # 4. 리포트 (10건)
-    reports = analyzed.get("reports", [])[:10]
-    if reports:
-        reports_header = create_reports_header_embed(
-            report_count=len(reports),
-            summary=analyzed.get("reports_summary"),
-        )
-        embeds.append(reports_header)
+    # 점심 스케줄에서는 리포트와 유튜브 제외
+    reports = []
+    korean_videos = []
+    intl_videos = []
+    video_summaries = {}
 
-        reports_list = create_reports_list_embed(
-            items=reports,
-            max_items=10,
-        )
-        embeds.append(reports_list)
+    if not is_noon:
+        # 4. 리포트
+        reports = analyzed.get("reports", [])[:NewsSettings.MAX_REPORTS]
+        if reports:
+            reports_header = create_reports_header_embed(
+                report_count=len(reports),
+                summary=analyzed.get("reports_summary"),
+            )
+            embeds.append(reports_header)
 
-    # 5. 한국 유튜브 (5건)
-    korean_videos = analyzed.get("korean_videos", [])[:5]
-    video_summaries = analyzed.get("video_summaries", {})
+            reports_list = create_reports_list_embed(
+                items=reports,
+                max_items=10,
+            )
+            embeds.append(reports_list)
 
-    if korean_videos:
-        korean_yt_list = create_youtube_list_embed(
-            items=korean_videos,
-            title=f"🇰🇷 한국 유튜브 ({len(korean_videos)}건)",
-            max_items=5,
-            video_summaries=video_summaries,
-        )
-        embeds.append(korean_yt_list)
+        # 5. 한국 유튜브
+        korean_videos = analyzed.get("korean_videos", [])[:NewsSettings.MAX_YOUTUBE_KOREAN]
+        video_summaries = analyzed.get("video_summaries", {})
 
-    # 6. 해외 유튜브 (5건)
-    intl_videos = analyzed.get("international_videos", [])[:5]
+        if korean_videos:
+            korean_yt_list = create_youtube_list_embed(
+                items=korean_videos,
+                title=f"🇰🇷 한국 유튜브 ({len(korean_videos)}건)",
+                max_items=5,
+                video_summaries=video_summaries,
+            )
+            embeds.append(korean_yt_list)
 
-    if intl_videos:
-        intl_yt_list = create_youtube_list_embed(
-            items=intl_videos,
-            title=f"🇺🇸 해외 유튜브 ({len(intl_videos)}건)",
-            max_items=5,
-            video_summaries=video_summaries,
-        )
-        embeds.append(intl_yt_list)
+        # 6. 해외 유튜브
+        intl_videos = analyzed.get("international_videos", [])[:NewsSettings.MAX_YOUTUBE_INTL]
+
+        if intl_videos:
+            intl_yt_list = create_youtube_list_embed(
+                items=intl_videos,
+                title=f"🇺🇸 해외 유튜브 ({len(intl_videos)}건)",
+                max_items=5,
+                video_summaries=video_summaries,
+            )
+            embeds.append(intl_yt_list)
 
     all_videos = korean_videos + intl_videos
 
@@ -389,10 +456,32 @@ def main():
         sys.exit(1)
 
     try:
-        # 1. 콘텐츠 수집
-        news = collect_news()  # {"korean": [...], "international": [...]}
-        reports = collect_reports()
-        videos = collect_youtube()
+        # 1. 콘텐츠 수집 (병렬 실행)
+        logger.info("=== Starting Parallel Collection ===")
+        news = {"korean": [], "international": []}
+        reports = []
+        videos = {"korean": [], "international": []}
+
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = {
+                executor.submit(collect_news): "news",
+                executor.submit(collect_reports): "reports",
+                executor.submit(collect_youtube): "youtube",
+            }
+
+            for future in as_completed(futures):
+                task_name = futures[future]
+                try:
+                    result = future.result()
+                    if task_name == "news":
+                        news = result
+                    elif task_name == "reports":
+                        reports = result
+                    elif task_name == "youtube":
+                        videos = result
+                    logger.info(f"Completed: {task_name}")
+                except Exception as e:
+                    logger.error(f"Failed to collect {task_name}: {e}")
 
         # 수집된 콘텐츠가 없으면 종료
         all_news = news.get("korean", []) + news.get("international", [])
