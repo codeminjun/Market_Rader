@@ -2,41 +2,45 @@
 # channel_id: 유튜브 채널 ID (채널 URL에서 확인 가능)
 # RSS URL 형식: https://www.youtube.com/feeds/videos.xml?channel_id=CHANNEL_ID
 
+# 삼프로TV ONLY - 사용자 요청에 따라 다른 채널 비활성화
 korean:
-  # 삼프로TV - 경제/투자 전문 채널
+  # 삼프로TV - 경제/투자 전문 채널 (유일하게 활성화)
   - name: "삼프로TV"
     channel_id: "UChlv4GSd7OQl3js-jkLOnFA"
     priority: "high"
     enabled: true
+    summarize: true           # 요약 표시
+    max_summary_length: 200   # 간단 요약
     description: "경제/투자 전문 유튜브 채널"
 
-  # 슈카월드 - 경제/시사
+  # 슈카월드 - 비활성화
   - name: "슈카월드"
     channel_id: "UCsJ6RuBiTVWRX156FVbeaGg"
     priority: "high"
-    enabled: true
+    enabled: false
     description: "경제/시사 유튜브 채널"
 
+# 해외 채널 - 모두 비활성화 (삼프로TV only)
 international:
   # CNBC
   - name: "CNBC"
     channel_id: "UCvJJ_dzjViJCoLf5uKUTwoA"
     priority: "high"
-    enabled: true
+    enabled: false
     description: "CNBC 경제 뉴스"
 
   # Bloomberg Markets and Finance
   - name: "Bloomberg"
     channel_id: "UCIALMKvObZNtJ6AmdCLP7Lg"
     priority: "high"
-    enabled: true
+    enabled: false
     description: "Bloomberg 금융 뉴스"
 
   # Yahoo Finance
   - name: "Yahoo Finance"
     channel_id: "UCEAZeUIeJs0IjQiqTCdVSIg"
     priority: "medium"
-    enabled: true
+    enabled: false
     description: "Yahoo Finance 뉴스"
 
 # 우선순위별 처리 방식

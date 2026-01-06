@@ -1,9 +1,11 @@
 name: Daily Stock News
 
 on:
-  # 매일 오전 7시 (KST) = 22:00 (UTC, 전날)
+  # 오전 7시 (KST) = 22:00 UTC (전날) - 전날 뉴스 요약
+  # 오후 12시 (KST) = 03:00 UTC - 당일 오전 뉴스 요약
   schedule:
-    - cron: '0 22 * * *'
+    - cron: '0 22 * * *'  # 오전 7시 KST
+    - cron: '0 3 * * *'   # 오후 12시 KST
 
   # 수동 실행 가능
   workflow_dispatch:
@@ -35,6 +37,7 @@ jobs:
           NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
           NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
           LOG_LEVEL: INFO
+          TZ: Asia/Seoul
         run: |
           python src/main.py
 

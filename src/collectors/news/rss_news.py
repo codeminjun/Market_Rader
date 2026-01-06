@@ -99,13 +99,17 @@ class RSSNewsCollector(BaseCollector):
 
 def create_rss_collectors(sources: list[dict]) -> list[RSSNewsCollector]:
     """설정에서 RSS 수집기 목록 생성"""
+    from src.utils.constants import get_priority_from_string
+
     collectors = []
     for source in sources:
         if source.get("type") == "rss" and source.get("enabled", True):
+            priority = get_priority_from_string(source.get("priority", "medium"))
             collectors.append(
                 RSSNewsCollector(
                     name=source["name"],
                     url=source["url"],
+                    priority=priority,
                 )
             )
     return collectors
