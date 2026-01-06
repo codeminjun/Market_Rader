@@ -1,14 +1,16 @@
 """
 네이버 증권 리서치 수집기
-증권사 애널리스트 리포트 수집
+증권사 애널리스트 리포트 수집 + 시총 50위 종목 필터링
 """
 from datetime import datetime
 from typing import Optional
+import re
 import requests
 from bs4 import BeautifulSoup
 
 from src.collectors.base import BaseCollector, ContentItem, ContentType, Priority
 from src.utils.logger import logger
+from config.settings import get_top_companies
 
 
 class NaverResearchCollector(BaseCollector):
@@ -20,15 +22,50 @@ class NaverResearchCollector(BaseCollector):
         "invest": {"url": "invest_list.naver", "name": "투자정보"},
         "company": {"url": "company_list.naver", "name": "기업분석"},
         "industry": {"url": "industry_list.naver", "name": "산업분석"},
-        "market": {"url": "market_list.naver", "name": "시황정보"},
+        "market": {"url": "market_info_list.naver", "name": "시황정보"},
     }
 
-    def __init__(self, categories: Optional[list[str]] = None):
+    def __init__(self, categories: Optional[list[str]] = None, filter_top50: bool = True):
         super().__init__("네이버 증권 리서치", ContentType.REPORT)
         self.categories = categories or ["invest", "company", "market"]
+        self.filter_top50 = filter_top50
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
         }
+        # 시총 50위 기업 목록 로드
+        self._load_top50_companies()
+
+    def _load_top50_companies(self):
+        """시총 50위 기업 목록 로드"""
+        try:
+            config = get_top_companies()
+            self.top50_codes = set()
+            self.top50_names = set()
+
+            for company in config.get("korean_top50", []):
+                if "code" in company:
+                    self.top50_codes.add(company["code"])
+                if "name" in company:
+                    self.top50_names.add(company["name"])
+        except Exception as e:
+            logger.warning(f"Failed to load top50 companies: {e}")
+            self.top50_codes = set()
+            self.top50_names = set()
+
+    def _is_top50_stock(self, stock_name: str, stock_code: str = "") -> bool:
+        """시총 50위 종목인지 확인"""
+        if not self.filter_top50:
+            return True
+
+        if stock_code and stock_code in self.top50_codes:
+            return True
+
+        # 종목명으로 검색 (부분 매칭)
+        for name in self.top50_names:
+            if name in stock_name or stock_name in name:
+                return True
+
+        return False
 
     def collect(self) -> list[ContentItem]:
         """리서치 리포트 수집"""
@@ -75,7 +112,7 @@ class NaverResearchCollector(BaseCollector):
         return items
 
     def _parse_report_row(self, row, category_name: str) -> Optional[ContentItem]:
-        """리포트 행 파싱"""
+        """리포트 행 파싱 (목표가 변동 포함)"""
         try:
             cells = row.select("td")
             if len(cells) < 4:
@@ -117,12 +154,52 @@ class NaverResearchCollector(BaseCollector):
                     except ValueError:
                         pass
 
-            # 종목명 (기업분석의 경우)
+            # 종목명 및 종목코드 추출
             stock_name = ""
+            stock_code = ""
+            target_price = None
+            price_change = None
+            opinion = ""
+
             if category_name == "기업분석" and len(cells) > 0:
                 stock_name = cells[0].get_text(strip=True)
+
+                # 종목코드 추출 (링크에서)
+                stock_link = cells[0].select_one("a")
+                if stock_link:
+                    stock_href = stock_link.get("href", "")
+                    code_match = re.search(r'code=(\d{6})', stock_href)
+                    if code_match:
+                        stock_code = code_match.group(1)
+
+                # 시총 50위 필터링
+                if self.filter_top50 and not self._is_top50_stock(stock_name, stock_code):
+                    return None
+
+                # 목표가 추출 (있는 경우)
+                if len(cells) >= 5:
+                    # 의견 (매수/보유/매도 등)
+                    opinion_cell = cells[3] if len(cells) > 3 else None
+                    if opinion_cell:
+                        opinion = opinion_cell.get_text(strip=True)
+
+                    # 목표가
+                    target_cell = cells[4] if len(cells) > 4 else None
+                    if target_cell:
+                        target_text = target_cell.get_text(strip=True).replace(",", "")
+                        try:
+                            target_price = int(re.sub(r'[^\d]', '', target_text))
+                        except (ValueError, TypeError):
+                            pass
+
                 if stock_name:
-                    title = f"[{stock_name}] {title}"
+                    # 목표가 변동 표시
+                    if target_price and opinion:
+                        title = f"[{stock_name}] {title} | {opinion} 목표가 {target_price:,}원"
+                    elif target_price:
+                        title = f"[{stock_name}] {title} | 목표가 {target_price:,}원"
+                    else:
+                        title = f"[{stock_name}] {title}"
 
             return ContentItem(
                 id=self.generate_id(url),
@@ -131,11 +208,15 @@ class NaverResearchCollector(BaseCollector):
                 source=f"{broker} ({category_name})" if broker else f"증권 리서치 ({category_name})",
                 content_type=ContentType.REPORT,
                 published_at=published_at,
-                priority=Priority.MEDIUM,
+                priority=Priority.HIGH if stock_name else Priority.MEDIUM,
                 extra_data={
                     "broker": broker,
                     "category": category_name,
                     "stock_name": stock_name,
+                    "stock_code": stock_code,
+                    "target_price": target_price,
+                    "opinion": opinion,
+                    "is_top50": bool(stock_name and self._is_top50_stock(stock_name, stock_code)),
                 },
             )
 

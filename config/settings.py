@@ -37,8 +37,8 @@ class Settings:
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
 
     # News Settings
-    MAX_NEWS_COUNT: int = 10  # 국내/해외 각각 10건
-    MAX_REPORTS_COUNT: int = 10
+    MAX_NEWS_COUNT: int = 20  # 충분한 뉴스 확보 (점심 15개, 아침 14+6개)
+    MAX_REPORTS_COUNT: int = 15
     MAX_YOUTUBE_COUNT: int = 10
 
     # Cache file path
@@ -72,6 +72,11 @@ def get_news_sources() -> dict:
 def get_youtube_channels() -> dict:
     """유튜브 채널 설정 로드"""
     return load_yaml_config("youtube_channels.yaml")
+
+
+def get_top_companies() -> dict:
+    """시총 상위 50위 기업 설정 로드"""
+    return load_yaml_config("top_companies.yaml")
 
 
 # 설정 인스턴스

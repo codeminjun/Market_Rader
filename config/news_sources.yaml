@@ -11,21 +11,37 @@ news:
         - "economy"    # 경제
         - "world"      # 국제
 
-    # 한국 경제 뉴스 RSS
+    # 한국 경제 뉴스 RSS (우선순위: 한국경제 > 연합인포맥스 > 매일경제)
     - name: "한국경제"
       type: "rss"
-      url: "https://www.hankyung.com/feed/stock"
+      url: "https://www.hankyung.com/feed/finance"
       enabled: true
+      priority: "high"  # 사용자 선호 언론사
 
-    - name: "매일경제"
+    # 산업/기업 전문 RSS
+    - name: "한경 산업"
       type: "rss"
-      url: "https://www.mk.co.kr/rss/30100041/"
+      url: "https://www.hankyung.com/feed/all-news"
       enabled: true
+      priority: "high"  # 산업뉴스 우선
+
+    - name: "전자신문"
+      type: "rss"
+      url: "https://rss.etnews.com/Section901.xml"
+      enabled: true
+      priority: "high"  # IT/반도체 산업 전문
 
     - name: "연합인포맥스"
       type: "rss"
       url: "https://news.einfomax.co.kr/rss/S1N1.xml"
       enabled: true
+      priority: "medium"
+
+    - name: "매일경제"
+      type: "rss"
+      url: "https://www.mk.co.kr/rss/30100041/"
+      enabled: true
+      priority: "low"  # 상대적으로 낮은 우선순위
 
   international:
     # Reuters RSS
@@ -66,6 +82,22 @@ reports:
 
 # 중요 키워드 (중요도 판단에 사용)
 important_keywords:
+  # 산업뉴스 키워드 (최우선)
+  industry:
+    - "반도체"
+    - "HBM"
+    - "파운드리"
+    - "2차전지"
+    - "배터리"
+    - "AI"
+    - "인공지능"
+    - "데이터센터"
+    - "바이오"
+    - "신약"
+    - "조선"
+    - "방산"
+    - "전기차"
+    - "자율주행"
   high:
     - "금리"
     - "FOMC"

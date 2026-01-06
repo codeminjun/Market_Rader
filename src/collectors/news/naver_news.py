@@ -49,17 +49,20 @@ class NaverFinanceNewsCollector(BaseCollector):
 
         try:
             # 메인 뉴스 페이지에서 수집
-            url = f"{self.BASE_URL}mainnews.naver?type=1"
+            url = f"{self.BASE_URL}mainnews.naver"
             response = requests.get(url, headers=self.headers, timeout=10)
             response.raise_for_status()
 
             soup = BeautifulSoup(response.text, "lxml")
 
-            # 뉴스 목록 파싱
-            news_list = soup.select("ul.newsList li")
+            # 뉴스 목록 파싱 - dl 구조에서 각 기사 찾기
+            # articleSubject(제목), articleSummary(요약/언론사/날짜) 구조
+            article_subjects = soup.select("dd.articleSubject")
 
-            for news in news_list[:15]:
-                item = self._parse_news_item(news, cat_info["name"])
+            for idx, subject_dd in enumerate(article_subjects[:15]):
+                # 다음 sibling에서 summary 정보 가져오기
+                summary_dd = subject_dd.find_next_sibling("dd", class_="articleSummary")
+                item = self._parse_news_item(subject_dd, summary_dd, cat_info["name"])
                 if item:
                     items.append(item)
 
@@ -70,11 +73,11 @@ class NaverFinanceNewsCollector(BaseCollector):
 
         return items
 
-    def _parse_news_item(self, element, category_name: str) -> Optional[ContentItem]:
-        """뉴스 항목 파싱"""
+    def _parse_news_item(self, subject_dd, summary_dd, category_name: str) -> Optional[ContentItem]:
+        """뉴스 항목 파싱 (새로운 구조)"""
         try:
             # 제목과 링크
-            title_elem = element.select_one("a")
+            title_elem = subject_dd.select_one("a")
             if not title_elem:
                 return None
 
@@ -93,19 +96,27 @@ class NaverFinanceNewsCollector(BaseCollector):
             else:
                 url = href
 
-            # 언론사
-            source_elem = element.select_one(".press")
-            source = source_elem.get_text(strip=True) if source_elem else "네이버 금융"
-
-            # 날짜
-            date_elem = element.select_one(".wdate")
+            # summary_dd에서 언론사와 날짜 추출
+            source = "네이버 금융"
             published_at = None
-            if date_elem:
-                try:
-                    date_str = date_elem.get_text(strip=True)
-                    published_at = datetime.strptime(date_str, "%Y-%m-%d %H:%M")
-                except ValueError:
-                    pass
+
+            if summary_dd:
+                # 언론사
+                source_elem = summary_dd.select_one(".press")
+                if source_elem:
+                    source = source_elem.get_text(strip=True)
+
+                # 날짜
+                date_elem = summary_dd.select_one(".wdate")
+                if date_elem:
+                    try:
+                        date_str = date_elem.get_text(strip=True)
+                        published_at = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
+                    except ValueError:
+                        try:
+                            published_at = datetime.strptime(date_str, "%Y-%m-%d %H:%M")
+                        except ValueError:
+                            pass
 
             return ContentItem(
                 id=self.generate_id(url),
