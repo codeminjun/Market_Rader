@@ -2,6 +2,7 @@
 유튜브 채널 모니터링
 RSS 피드를 통한 새 영상 감지
 """
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from typing import Optional
 import feedparser
@@ -36,23 +37,40 @@ class YouTubeChannelMonitor(BaseCollector):
         return channels
 
     def collect(self) -> dict:
-        """모든 채널에서 새 영상 수집 (지역별 분리)"""
+        """모든 채널에서 새 영상 수집 (병렬 처리)"""
         korean_videos = []
         intl_videos = []
 
-        # 한국 채널
+        # 모든 채널을 하나의 리스트로 합침 (region 정보 포함)
+        all_channels = []
         for channel in self.channels.get("korean", []):
-            channel_items = self._collect_channel(channel)
-            for item in channel_items:
-                item.extra_data["region"] = "korean"
-            korean_videos.extend(channel_items)
-
-        # 해외 채널
+            channel["_region"] = "korean"
+            all_channels.append(channel)
         for channel in self.channels.get("international", []):
-            channel_items = self._collect_channel(channel)
-            for item in channel_items:
-                item.extra_data["region"] = "international"
-            intl_videos.extend(channel_items)
+            channel["_region"] = "international"
+            all_channels.append(channel)
+
+        # 채널별 병렬 수집
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            future_to_channel = {
+                executor.submit(self._collect_channel, channel): channel
+                for channel in all_channels
+            }
+
+            for future in as_completed(future_to_channel):
+                channel = future_to_channel[future]
+                region = channel.get("_region", "korean")
+                try:
+                    items = future.result()
+                    for item in items:
+                        item.extra_data["region"] = region
+
+                    if region == "korean":
+                        korean_videos.extend(items)
+                    else:
+                        intl_videos.extend(items)
+                except Exception as e:
+                    logger.error(f"Failed to collect from {channel.get('name')}: {e}")
 
         # 최신순 정렬
         korean_videos.sort(key=lambda x: x.published_at or datetime.min, reverse=True)
