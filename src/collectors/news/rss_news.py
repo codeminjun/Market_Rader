@@ -91,10 +91,9 @@ class RSSNewsCollector(BaseCollector):
         return None
 
     def _strip_html(self, text: str) -> str:
-        """HTML 태그 제거"""
-        import re
-        clean = re.compile('<.*?>')
-        return re.sub(clean, '', text).strip()
+        """HTML 태그 제거 (중앙 유틸리티 사용)"""
+        from src.utils.constants import strip_html
+        return strip_html(text)
 
 
 def create_rss_collectors(sources: list[dict]) -> list[RSSNewsCollector]:

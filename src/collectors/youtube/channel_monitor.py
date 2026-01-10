@@ -159,13 +159,9 @@ class YouTubeChannelMonitor(BaseCollector):
                 if "media_description" in media_group:
                     description = media_group.media_description[:500]
 
-            # 우선순위 매핑
-            priority_map = {
-                "high": Priority.HIGH,
-                "medium": Priority.MEDIUM,
-                "low": Priority.LOW,
-            }
-            priority = priority_map.get(channel.get("priority", "medium"), Priority.MEDIUM)
+            # 우선순위 매핑 (중앙 유틸리티 사용)
+            from src.utils.constants import get_priority_from_string
+            priority = get_priority_from_string(channel.get("priority", "medium"))
 
             # 채널 정보
             channel_name = channel.get("name", "Unknown")
