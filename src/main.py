@@ -311,12 +311,71 @@ def get_schedule_type() -> tuple[str, str]:
     """
     from src.utils.constants import ScheduleSettings
 
-    hour = datetime.now().hour
+    now = datetime.now()
+    weekday = now.weekday()  # 0=월요일, 6=일요일
+    hour = now.hour
+
+    # 주말 스케줄
+    if weekday == 5:  # 토요일
+        return ("saturday", ScheduleSettings.SATURDAY_TITLE)
+    elif weekday == 6:  # 일요일
+        return ("sunday", ScheduleSettings.SUNDAY_TITLE)
+
+    # 평일 스케줄
     if ScheduleSettings.MORNING_START_HOUR <= hour <= ScheduleSettings.MORNING_END_HOUR:
         return ("morning", ScheduleSettings.MORNING_TITLE)
     elif ScheduleSettings.NOON_START_HOUR <= hour <= ScheduleSettings.NOON_END_HOUR:
         return ("noon", ScheduleSettings.NOON_TITLE)
     return ("manual", ScheduleSettings.MANUAL_TITLE)
+
+
+def send_weekend_to_discord(analyzed: dict, schedule_type: str) -> bool:
+    """주말 전용 Discord 전송 (토요일: 리뷰, 일요일: 전망)"""
+    from src.analyzer.weekly_summarizer import weekly_summarizer, weekly_preview
+    from src.discord import create_weekly_review_embed, create_weekly_preview_embed
+
+    logger.info(f"=== Sending Weekend Content ({schedule_type}) ===")
+
+    now = datetime.now()
+    embeds = []
+
+    # 뉴스와 리포트 수집
+    all_news = analyzed.get("korean_news", []) + analyzed.get("international_news", [])
+    reports = analyzed.get("reports", [])
+
+    if schedule_type == "saturday":
+        # 토요일: 주간 리뷰
+        logger.info("Generating weekly review...")
+        review_data = weekly_summarizer.generate_weekly_review(
+            news_items=all_news[:25],
+            report_items=reports[:10],
+        )
+        embeds = create_weekly_review_embed(now, review_data)
+
+    elif schedule_type == "sunday":
+        # 일요일: 주간 전망
+        logger.info("Generating weekly preview...")
+        preview_data = weekly_preview.generate_weekly_preview(
+            recent_news=all_news[:20],
+            recent_reports=reports[:10],
+        )
+        embeds = create_weekly_preview_embed(now, preview_data)
+
+    if not embeds:
+        logger.warning("No weekend embeds generated")
+        return False
+
+    success = discord_sender.send_multiple_embeds(
+        embeds=embeds,
+        username="Market Rader 📈",
+    )
+
+    if success:
+        logger.info(f"Successfully sent {len(embeds)} weekend embeds to Discord")
+    else:
+        logger.error("Failed to send weekend content to Discord")
+
+    return success
 
 
 def send_to_discord(analyzed: dict) -> bool:
@@ -328,6 +387,10 @@ def send_to_discord(analyzed: dict) -> bool:
     embeds = []
     now = datetime.now()
     schedule_type, header_title = get_schedule_type()
+
+    # 주말 스케줄 처리
+    if schedule_type in ("saturday", "sunday"):
+        return send_weekend_to_discord(analyzed, schedule_type)
 
     # 스케줄 타입에 따른 콘텐츠 설정
     is_noon = schedule_type == "noon"
