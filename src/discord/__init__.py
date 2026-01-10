@@ -16,6 +16,10 @@ from src.discord.embeds import (
     create_youtube_list_embed,
     create_youtube_quick_embed,
 )
+from src.discord.embeds.weekend_embed import (
+    create_weekly_review_embed,
+    create_weekly_preview_embed,
+)
 
 __all__ = [
     # Sender
@@ -35,4 +39,7 @@ __all__ = [
     "create_youtube_item_embed",
     "create_youtube_list_embed",
     "create_youtube_quick_embed",
+    # Weekend Embeds
+    "create_weekly_review_embed",
+    "create_weekly_preview_embed",
 ]
