@@ -21,6 +21,25 @@ def get_priority_from_string(priority_str: str) -> Priority:
 
 
 # ============================================================
+# 스케줄 설정
+# ============================================================
+class ScheduleSettings:
+    """스케줄 관련 설정 (main.py에서 하드코딩된 값 외부화)"""
+    # 오전 스케줄 (전일 마감 후 뉴스)
+    MORNING_START_HOUR = 6
+    MORNING_END_HOUR = 8
+    MORNING_TITLE = "📰 전일 마감 후 주요 뉴스"
+
+    # 점심 스케줄 (오전장 뉴스)
+    NOON_START_HOUR = 11
+    NOON_END_HOUR = 13
+    NOON_TITLE = "📰 오전장 주요 뉴스"
+
+    # 수동 실행
+    MANUAL_TITLE = "📰 주식 뉴스 브리핑"
+
+
+# ============================================================
 # 뉴스 수집/표시 설정
 # ============================================================
 class NewsSettings:
@@ -124,3 +143,69 @@ def extract_ticker(text: str) -> str | None:
         if match:
             return match.group(1)
     return None
+
+
+# ============================================================
+# Discord Embed 공통 유틸리티
+# ============================================================
+class EmbedUtils:
+    """Discord Embed 공통 유틸리티 (중복 코드 통합)"""
+
+    # 제목/설명 길이 제한 (Discord API 한계)
+    MAX_TITLE_LENGTH = 250
+    MAX_DESCRIPTION_LENGTH = 4096
+    MAX_FIELD_VALUE_LENGTH = 1024
+
+    @staticmethod
+    def get_importance_emoji(score: float, is_covered_call: bool = False) -> str:
+        """중요도 점수에 따른 이모지 (통합 버전)"""
+        if is_covered_call:
+            return "💰🔥"  # 배당/커버드콜 강조
+        if score >= 0.8:
+            return "🔴"  # 긴급
+        elif score >= 0.6:
+            return "🟠"  # 중요
+        elif score >= 0.4:
+            return "🟡"  # 일반
+        else:
+            return "⚪"  # 참고
+
+    @staticmethod
+    def truncate_text(text: str, max_length: int, suffix: str = "...") -> str:
+        """텍스트를 지정된 길이로 자름"""
+        if len(text) <= max_length:
+            return text
+        return text[:max_length - len(suffix)] + suffix
+
+    @staticmethod
+    def get_priority_display(priority: "Priority", style: str = "stars") -> str:
+        """우선순위 표시 (스타일 통합)
+
+        Args:
+            priority: Priority enum
+            style: "stars" | "emoji" | "text"
+        """
+        from src.collectors.base import Priority
+
+        if style == "stars":
+            if priority == Priority.HIGH:
+                return "⭐⭐⭐"
+            elif priority == Priority.MEDIUM:
+                return "⭐⭐"
+            else:
+                return "⭐"
+        elif style == "emoji":
+            if priority == Priority.HIGH:
+                return "⭐"
+            elif priority == Priority.MEDIUM:
+                return "☆"
+            else:
+                return "·"
+        elif style == "text":
+            if priority == Priority.HIGH:
+                return "⭐⭐⭐ [필수 시청]"
+            elif priority == Priority.MEDIUM:
+                return "⭐⭐ [추천]"
+            else:
+                return "⭐ [참고]"
+        return ""

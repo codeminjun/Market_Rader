@@ -309,12 +309,14 @@ def get_schedule_type() -> tuple[str, str]:
     Returns:
         (schedule_type, header_title)
     """
+    from src.utils.constants import ScheduleSettings
+
     hour = datetime.now().hour
-    if 6 <= hour <= 8:
-        return ("morning", "📰 전일 마감 후 주요 뉴스")
-    elif 11 <= hour <= 13:
-        return ("noon", "📰 오전장 주요 뉴스")
-    return ("manual", "📰 주식 뉴스 브리핑")
+    if ScheduleSettings.MORNING_START_HOUR <= hour <= ScheduleSettings.MORNING_END_HOUR:
+        return ("morning", ScheduleSettings.MORNING_TITLE)
+    elif ScheduleSettings.NOON_START_HOUR <= hour <= ScheduleSettings.NOON_END_HOUR:
+        return ("noon", ScheduleSettings.NOON_TITLE)
+    return ("manual", ScheduleSettings.MANUAL_TITLE)
 
 
 def send_to_discord(analyzed: dict) -> bool:
