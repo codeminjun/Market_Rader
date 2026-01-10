@@ -2,6 +2,8 @@
 중요도 점수 판단 모듈
 AI 기반 콘텐츠 중요도 평가
 """
+import re
+from functools import lru_cache
 from typing import Optional
 
 from src.collectors.base import ContentItem, Priority
@@ -95,9 +97,29 @@ class ImportanceScorer:
     def __init__(self):
         self.client = groq_client
         self._load_keywords_from_config()
+        # 사전 컴파일된 정규표현식 패턴 생성 (성능 최적화)
+        self._compiled_patterns = {}
+        self._compile_keyword_patterns()
 
-    def _check_keywords(self, text_lower: str, keywords: list) -> bool:
-        """키워드 리스트에서 매칭 여부 확인"""
+    def _compile_keyword_patterns(self):
+        """키워드 리스트를 정규표현식 패턴으로 사전 컴파일 (성능 최적화)"""
+        keyword_lists = {
+            "covered_call": self.COVERED_CALL_KEYWORDS,
+            "industry": self.INDUSTRY_KEYWORDS,
+            "high": self.HIGH_IMPORTANCE_KEYWORDS,
+            "medium": self.MEDIUM_IMPORTANCE_KEYWORDS,
+        }
+
+        for name, keywords in keyword_lists.items():
+            # 대소문자 무시 정규표현식 패턴 생성
+            escaped_keywords = [re.escape(kw.lower()) for kw in keywords]
+            pattern = re.compile("|".join(escaped_keywords), re.IGNORECASE)
+            self._compiled_patterns[name] = pattern
+
+    def _check_keywords(self, text_lower: str, keywords: list, pattern_name: str = None) -> bool:
+        """키워드 리스트에서 매칭 여부 확인 (사전 컴파일된 패턴 사용)"""
+        if pattern_name and pattern_name in self._compiled_patterns:
+            return bool(self._compiled_patterns[pattern_name].search(text_lower))
         return any(keyword.lower() in text_lower for keyword in keywords)
 
     def _load_keywords_from_config(self):
@@ -134,21 +156,21 @@ class ImportanceScorer:
         text = f"{item.title} {item.description or ''}"
         text_lower = text.lower()
 
-        # 커버드콜/배당 뉴스 체크 (최최우선 가중치)
-        if self._check_keywords(text_lower, self.COVERED_CALL_KEYWORDS):
+        # 커버드콜/배당 뉴스 체크 (최최우선 가중치) - 사전 컴파일된 패턴 사용
+        if self._check_keywords(text_lower, self.COVERED_CALL_KEYWORDS, "covered_call"):
             score += ImportanceThresholds.COVERED_CALL_WEIGHT
             item.extra_data["is_covered_call"] = True
 
         # 산업 키워드 (최우선 가중치)
-        if self._check_keywords(text_lower, self.INDUSTRY_KEYWORDS):
+        if self._check_keywords(text_lower, self.INDUSTRY_KEYWORDS, "industry"):
             score += ImportanceThresholds.INDUSTRY_WEIGHT
 
         # 중요 키워드
-        if self._check_keywords(text_lower, self.HIGH_IMPORTANCE_KEYWORDS):
+        if self._check_keywords(text_lower, self.HIGH_IMPORTANCE_KEYWORDS, "high"):
             score += ImportanceThresholds.HIGH_KEYWORD_WEIGHT
 
         # 일반 키워드
-        if self._check_keywords(text_lower, self.MEDIUM_IMPORTANCE_KEYWORDS):
+        if self._check_keywords(text_lower, self.MEDIUM_IMPORTANCE_KEYWORDS, "medium"):
             score += ImportanceThresholds.MEDIUM_KEYWORD_WEIGHT
 
         # 우선순위 기반 조정
