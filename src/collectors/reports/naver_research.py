@@ -1,12 +1,27 @@
 """
 네이버 증권 리서치 수집기
-증권사 애널리스트 리포트 수집 + 시총 50위 종목 필터링
+증권사 애널리스트 리포트 수집 + 시총 50위 종목 필터링 + PDF OCR 텍스트 추출
 """
+import io
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Optional
 import re
 import requests
 from bs4 import BeautifulSoup
+
+# PDF/OCR 라이브러리
+try:
+    import fitz  # PyMuPDF
+except ImportError:
+    fitz = None
+
+try:
+    import pytesseract
+    from PIL import Image
+except ImportError:
+    pytesseract = None
+    Image = None
 
 from src.collectors.base import BaseCollector, ContentItem, ContentType, Priority
 from src.utils.logger import logger
@@ -25,13 +40,24 @@ class NaverResearchCollector(BaseCollector):
         "market": {"url": "market_info_list.naver", "name": "시황정보"},
     }
 
-    def __init__(self, categories: Optional[list[str]] = None, filter_top50: bool = True):
+    def __init__(
+        self,
+        categories: Optional[list[str]] = None,
+        filter_top50: bool = True,
+        extract_pdf: bool = False,
+        max_pdf_extract: int = 5,
+    ):
         super().__init__("네이버 증권 리서치", ContentType.REPORT)
         self.categories = categories or ["invest", "company", "market"]
         self.filter_top50 = filter_top50
+        self.extract_pdf = extract_pdf  # PDF 텍스트 추출 여부
+        self.max_pdf_extract = max_pdf_extract  # PDF 추출 최대 개수
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
         }
+        # 세션 재사용으로 TCP 연결 오버헤드 감소
+        self._session = requests.Session()
+        self._session.headers.update(self.headers)
         # 시총 50위 기업 목록 로드
         self._load_top50_companies()
 
@@ -68,16 +94,160 @@ class NaverResearchCollector(BaseCollector):
         return False
 
     def collect(self) -> list[ContentItem]:
-        """리서치 리포트 수집"""
+        """리서치 리포트 수집 (병렬 처리)"""
         items = []
 
-        for category in self.categories:
-            if category in self.CATEGORIES:
-                category_items = self._collect_category(category)
-                items.extend(category_items)
+        # 카테고리별 병렬 수집
+        valid_categories = [c for c in self.categories if c in self.CATEGORIES]
+
+        with ThreadPoolExecutor(max_workers=len(valid_categories)) as executor:
+            futures = {
+                executor.submit(self._collect_category, category): category
+                for category in valid_categories
+            }
+
+            for future in as_completed(futures):
+                category = futures[future]
+                try:
+                    category_items = future.result()
+                    items.extend(category_items)
+                except Exception as e:
+                    logger.error(f"Failed to collect {category} reports: {e}")
+
+        # PDF 텍스트 추출 (설정된 경우)
+        if self.extract_pdf and items:
+            items = self._extract_pdf_for_top_items(items)
 
         logger.info(f"Collected {len(items)} reports from {self.name}")
         return items
+
+    def _extract_pdf_for_top_items(self, items: list[ContentItem]) -> list[ContentItem]:
+        """상위 N개 리포트의 PDF 텍스트 추출 (병렬 처리)"""
+        # 1순위: 기업분석 리포트 (목표가 있는 것)
+        tier1 = [
+            item for item in items
+            if item.extra_data.get("stock_name") and item.extra_data.get("target_price")
+        ]
+
+        # 2순위: 기업분석 리포트 (종목명만 있는 것)
+        tier2 = [
+            item for item in items
+            if item.extra_data.get("stock_name") and item not in tier1
+        ]
+
+        # 3순위: 시황정보/투자정보 리포트
+        tier3 = [
+            item for item in items
+            if item.extra_data.get("category") in ("시황정보", "투자정보") and item not in tier1 and item not in tier2
+        ]
+
+        # 우선순위 순서로 합침
+        priority_items = (tier1 + tier2 + tier3)[:self.max_pdf_extract]
+
+        if not priority_items:
+            priority_items = items[:self.max_pdf_extract]
+
+        logger.info(f"Extracting PDF text for {len(priority_items)} reports")
+
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = {
+                executor.submit(self._extract_single_pdf, item): item
+                for item in priority_items
+            }
+
+            for future in as_completed(futures):
+                item = futures[future]
+                try:
+                    pdf_data = future.result()
+                    if pdf_data:
+                        item.extra_data["pdf_url"] = pdf_data.get("pdf_url")
+                        item.extra_data["pdf_text"] = pdf_data.get("pdf_text")
+                        item.extra_data["pdf_extracted"] = True
+                except Exception as e:
+                    logger.debug(f"PDF extraction failed for {item.title[:30]}: {e}")
+
+        return items
+
+    def _extract_single_pdf(self, item: ContentItem) -> Optional[dict]:
+        """단일 리포트 PDF 추출"""
+        try:
+            # 상세 페이지에서 PDF URL 추출
+            response = self._session.get(item.url, timeout=10)
+            response.raise_for_status()
+            response.encoding = "euc-kr"
+
+            soup = BeautifulSoup(response.text, "lxml")
+            pdf_link = soup.select_one("a[href*='.pdf']")
+
+            if not pdf_link:
+                return None
+
+            pdf_url = pdf_link.get("href")
+            if not pdf_url:
+                return None
+
+            # PDF 텍스트 추출
+            pdf_text = self._extract_pdf_text(pdf_url)
+
+            return {
+                "pdf_url": pdf_url,
+                "pdf_text": pdf_text,
+            }
+
+        except Exception as e:
+            logger.debug(f"Failed to extract PDF for {item.url}: {e}")
+            return None
+
+    def _extract_pdf_text(self, pdf_url: str) -> Optional[str]:
+        """PDF에서 텍스트 추출 (OCR 포함)"""
+        if not fitz:
+            logger.warning("PyMuPDF not available for PDF extraction")
+            return None
+
+        try:
+            response = self._session.get(pdf_url, timeout=60)
+            response.raise_for_status()
+
+            pdf_bytes = io.BytesIO(response.content)
+            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+
+            text_parts = []
+            max_pages = min(3, len(doc))  # 최대 3페이지만 (리포트는 첫 페이지가 중요)
+
+            for page_num in range(max_pages):
+                page = doc[page_num]
+                text = page.get_text("text")
+
+                # 텍스트가 적으면 OCR 시도
+                if len(text.strip()) < 100 and pytesseract and Image:
+                    try:
+                        mat = fitz.Matrix(2.0, 2.0)
+                        pix = page.get_pixmap(matrix=mat)
+                        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                        ocr_text = pytesseract.image_to_string(
+                            img, lang='kor+eng', config='--psm 6'
+                        )
+                        if ocr_text.strip():
+                            text = ocr_text
+                    except Exception as ocr_err:
+                        logger.debug(f"OCR failed for page {page_num}: {ocr_err}")
+
+                if text.strip():
+                    text_parts.append(text)
+
+            doc.close()
+
+            full_text = "\n\n".join(text_parts)
+            # 텍스트 정리
+            full_text = re.sub(r'[ \t]+', ' ', full_text)
+            full_text = re.sub(r'\n{3,}', '\n\n', full_text)
+
+            logger.debug(f"Extracted {len(full_text)} chars from {pdf_url[:50]}...")
+            return full_text.strip() if full_text else None
+
+        except Exception as e:
+            logger.debug(f"Failed to extract PDF text: {e}")
+            return None
 
     def _collect_category(self, category: str) -> list[ContentItem]:
         """카테고리별 리포트 수집"""
@@ -86,7 +256,7 @@ class NaverResearchCollector(BaseCollector):
 
         try:
             url = f"{self.BASE_URL}{cat_info['url']}"
-            response = requests.get(url, headers=self.headers, timeout=10)
+            response = self._session.get(url, timeout=10)
             response.raise_for_status()
             response.encoding = "euc-kr"
 
