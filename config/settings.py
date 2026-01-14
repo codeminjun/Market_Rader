@@ -79,5 +79,10 @@ def get_top_companies() -> dict:
     return load_yaml_config("top_companies.yaml")
 
 
+def get_journalist_priority() -> dict:
+    """우선 기자 설정 로드"""
+    return load_yaml_config("journalist_priority.yaml")
+
+
 # 설정 인스턴스
 settings = Settings()

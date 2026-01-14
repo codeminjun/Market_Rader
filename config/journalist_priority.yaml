@@ -1,0 +1,99 @@
+# 우선 기자/애널리스트 설정
+# 이들이 작성한 기사/리포트는 중요도 점수에서 추가 가중치를 받습니다.
+
+# 우선 기자 (동일 가중치)
+priority_journalists:
+  - name: "안재광"
+    affiliation: "한국경제"
+    weight: 0.25
+
+  - name: "김현석"
+    affiliation: "한국경제신문"
+    weight: 0.25
+
+  - name: "안근모"
+    affiliation: "글로벌모니터"
+    weight: 0.25
+
+  - name: "임형인"
+    affiliation: "중앙일보"
+    weight: 0.25
+
+  - name: "신현규"
+    affiliation: "매일경제신문"
+    weight: 0.25
+
+  - name: "황정수"
+    affiliation: "한국경제신문"
+    weight: 0.25
+
+  - name: "강해령"
+    affiliation: "서울경제신문"
+    weight: 0.25
+
+  - name: "이진우"
+    affiliation: "MBC"
+    weight: 0.25
+
+# 우선 애널리스트 (동일 가중치)
+priority_analysts:
+  - name: "허혜민"
+    affiliation: "키움증권"
+    weight: 0.25
+
+  - name: "엄경아"
+    affiliation: "신영증권"
+    weight: 0.25
+
+  - name: "박은정"
+    affiliation: "하나증권"
+    weight: 0.25
+
+  - name: "이동헌"
+    affiliation: "신한투자증권"
+    weight: 0.25
+
+# 관심 키워드 (이 키워드가 포함된 뉴스/리포트 우선)
+priority_keywords:
+  - keyword: "퀄테스트"
+    weight: 0.2
+  - keyword: "캐파"
+    weight: 0.2
+  - keyword: "증설"
+    weight: 0.15
+  - keyword: "설비투자"
+    weight: 0.15
+  - keyword: "HBM"
+    weight: 0.15
+  - keyword: "AI반도체"
+    weight: 0.15
+
+# 우선 리포트 소스 (이 증권사/소스의 리포트 우선)
+priority_report_sources:
+  - name: "SK증권"
+    report_type: "Morning Brief"
+    weight: 0.25
+  - name: "네이버 시황정보"
+    report_type: "시황"
+    weight: 0.2
+  - name: "키움증권"
+    report_type: "리포트"
+    weight: 0.15
+  - name: "신영증권"
+    report_type: "리포트"
+    weight: 0.15
+  - name: "하나증권"
+    report_type: "리포트"
+    weight: 0.15
+  - name: "신한투자증권"
+    report_type: "리포트"
+    weight: 0.15
+
+# 설정
+settings:
+  require_affiliation_match: false
+  store_journalist_info: true
+  store_analyst_info: true
+  flag_priority_articles: true
+  apply_keyword_boost: true
+  apply_source_boost: true
