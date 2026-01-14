@@ -1,11 +1,13 @@
 name: Daily Stock News
 
 on:
-  # 오전 7시 (KST) = 22:00 UTC (전날) - 전날 뉴스 요약
-  # 오후 12시 (KST) = 03:00 UTC - 당일 오전 뉴스 요약
+  # 오전 7시 (KST) = 22:00 UTC (전날) - 전일 마감 후 뉴스 (전일 17:00 ~ 당일 07:00)
+  # 오후 12시 (KST) = 03:00 UTC - 오전장 뉴스 (07:00 ~ 12:00)
+  # 오후 5시 (KST) = 08:00 UTC - 장마감 뉴스 (12:00 ~ 17:00)
   schedule:
     - cron: '0 22 * * *'  # 오전 7시 KST
     - cron: '0 3 * * *'   # 오후 12시 KST
+    - cron: '0 8 * * *'   # 오후 5시 KST
 
   # 수동 실행 가능
   workflow_dispatch:
@@ -24,7 +26,12 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: Install dependencies
+      - name: Install system dependencies (Tesseract OCR)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-kor
+
+      - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt

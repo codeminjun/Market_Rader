@@ -25,15 +25,20 @@ def get_priority_from_string(priority_str: str) -> Priority:
 # ============================================================
 class ScheduleSettings:
     """스케줄 관련 설정 (main.py에서 하드코딩된 값 외부화)"""
-    # 오전 스케줄 (전일 마감 후 뉴스)
+    # 오전 스케줄 (전일 마감 후 뉴스) - 전일 17:00 ~ 당일 07:00
     MORNING_START_HOUR = 6
     MORNING_END_HOUR = 8
     MORNING_TITLE = "📰 전일 마감 후 주요 뉴스"
 
-    # 점심 스케줄 (오전장 뉴스)
+    # 점심 스케줄 (오전장 뉴스) - 당일 07:00 ~ 12:00
     NOON_START_HOUR = 11
     NOON_END_HOUR = 13
     NOON_TITLE = "📰 오전장 주요 뉴스"
+
+    # 오후 스케줄 (장마감 뉴스) - 당일 12:00 ~ 17:00
+    AFTERNOON_START_HOUR = 16
+    AFTERNOON_END_HOUR = 18
+    AFTERNOON_TITLE = "📰 장마감 주요 뉴스"
 
     # 수동 실행
     MANUAL_TITLE = "📰 주식 뉴스 브리핑"
@@ -60,6 +65,10 @@ class NewsSettings:
     # 오후 12시 (뉴스 위주) - 한국 뉴스 중심 최대 15개
     NOON_MAX_KOREAN_NEWS = 15
     NOON_MAX_INTL_NEWS = 0   # 해외 뉴스 제외
+
+    # 오후 5시 (장마감 뉴스) - 한국 뉴스 10개
+    AFTERNOON_MAX_KOREAN_NEWS = 10
+    AFTERNOON_MAX_INTL_NEWS = 0  # 해외 뉴스 제외
 
     # 리포트/유튜브
     MAX_REPORTS = 10

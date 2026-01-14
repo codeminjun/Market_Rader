@@ -15,6 +15,13 @@ from src.collectors.youtube import (
     transcript_extractor,
     extract_video_id,
 )
+from src.collectors.market import (
+    MarketDataCollector,
+    market_data_collector,
+    MarketSummary,
+    IndexData,
+    ExchangeRate,
+)
 
 __all__ = [
     # Base
@@ -34,4 +41,10 @@ __all__ = [
     "YouTubeChannelMonitor",
     "transcript_extractor",
     "extract_video_id",
+    # Market Data
+    "MarketDataCollector",
+    "market_data_collector",
+    "MarketSummary",
+    "IndexData",
+    "ExchangeRate",
 ]

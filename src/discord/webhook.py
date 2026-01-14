@@ -14,7 +14,7 @@ class RetryConfig:
     MAX_RETRIES = 3
     BASE_DELAY = 1.0  # 초
     MAX_DELAY = 10.0  # 초
-    RATE_LIMIT_DELAY = 0.5  # 초
+    RATE_LIMIT_DELAY = 0.3  # 초 (Discord 기본 제한은 5 req/s)
 
 
 class DiscordSender:
@@ -142,7 +142,7 @@ class DiscordSender:
         self,
         embeds: list[DiscordEmbed],
         username: str = "Market Rader",
-        batch_size: int = 3,
+        batch_size: int = 5,
     ) -> bool:
         """
         여러 Embed 전송 (Discord 제한: 총 6000자, 메시지당 최대 10개)
@@ -150,7 +150,7 @@ class DiscordSender:
         Args:
             embeds: DiscordEmbed 리스트
             username: 봇 이름
-            batch_size: 배치 크기 (6000자 제한 대응으로 기본값 3)
+            batch_size: 배치 크기 (6000자 제한 대응, 기본값 5로 증가)
 
         Returns:
             전송 성공 여부
@@ -162,6 +162,7 @@ class DiscordSender:
         batch_size = min(batch_size, 10)  # Discord 제한
         success = True
         failed_batches = 0
+        total_batches = (len(embeds) + batch_size - 1) // batch_size
 
         for i in range(0, len(embeds), batch_size):
             batch = embeds[i:i + batch_size]
@@ -178,18 +179,18 @@ class DiscordSender:
             batch_success, _ = self._retry_with_backoff(_execute_batch)
 
             if not batch_success:
-                logger.error(f"Failed to send batch {i // batch_size + 1}")
+                logger.error(f"Failed to send batch {i // batch_size + 1}/{total_batches}")
                 success = False
                 failed_batches += 1
             else:
-                logger.debug(f"Batch {i // batch_size + 1} sent successfully")
+                logger.debug(f"Batch {i // batch_size + 1}/{total_batches} sent successfully")
 
-            # Rate limit 방지 (0.5초 대기)
+            # Rate limit 방지 (마지막 배치 제외)
             if i + batch_size < len(embeds):
                 time.sleep(RetryConfig.RATE_LIMIT_DELAY)
 
         if failed_batches > 0:
-            logger.warning(f"{failed_batches} batch(es) failed out of {len(embeds) // batch_size + 1}")
+            logger.warning(f"{failed_batches} batch(es) failed out of {total_batches}")
 
         return success
 
