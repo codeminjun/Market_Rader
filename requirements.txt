@@ -26,3 +26,4 @@ pyyaml>=6.0
 # Date/Time
 python-dateutil>=2.8.0
 pytz>=2024.1
+holidays>=0.40
