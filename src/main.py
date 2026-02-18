@@ -400,6 +400,7 @@ def get_schedule_type() -> tuple[str, str]:
         (schedule_type, header_title)
     """
     from src.utils.constants import ScheduleSettings
+    from src.utils.market_holiday import check_market_holidays
 
     now = datetime.now()
     weekday = now.weekday()  # 0=월요일, 6=일요일
@@ -410,6 +411,11 @@ def get_schedule_type() -> tuple[str, str]:
         return ("saturday", ScheduleSettings.SATURDAY_TITLE)
     elif weekday == 6:  # 일요일
         return ("sunday", ScheduleSettings.SUNDAY_TITLE)
+
+    # 평일 휴장일 체크
+    holiday_info = check_market_holidays(now)
+    if holiday_info.is_holiday:
+        return ("holiday", ScheduleSettings.HOLIDAY_TITLE)
 
     # 평일 스케줄
     if ScheduleSettings.MORNING_START_HOUR <= hour <= ScheduleSettings.MORNING_END_HOUR:
@@ -746,6 +752,27 @@ def main():
     try:
         # 현재 스케줄 타입 확인
         schedule_type, _ = get_schedule_type()
+
+        # 휴장일 처리: 안내 Embed만 전송하고 종료
+        if schedule_type == "holiday":
+            from src.utils.market_holiday import check_market_holidays
+            from src.discord.embeds.holiday_embed import create_holiday_embed
+
+            now = datetime.now()
+            holiday_info = check_market_holidays(now)
+            logger.info(f"Market holiday detected: {holiday_info.summary}")
+
+            embed = create_holiday_embed(holiday_info, now)
+            success = discord_sender.send_multiple_embeds(
+                embeds=[embed],
+                username="Market Rader 📈",
+            )
+            if success:
+                logger.info("Holiday notice sent to Discord")
+            else:
+                logger.error("Failed to send holiday notice")
+            return
+
         is_morning = schedule_type == "morning"
 
         # 1. 콘텐츠 수집 (병렬 실행)
