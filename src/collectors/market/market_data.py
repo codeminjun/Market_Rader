@@ -129,8 +129,16 @@ class MarketDataCollector:
 
             if change_elem:
                 change_text = change_elem.get_text(strip=True)
-                # 상승/하락 판단
-                is_up = "상승" in change_text or "+" in change_text
+                # 상승/하락 판단: ndown/nup 아이콘 클래스로 확인
+                ndown_elem = change_elem.select_one(".ndown")
+                nup_elem = change_elem.select_one(".nup")
+                if ndown_elem is not None:
+                    is_up = False
+                elif nup_elem is not None:
+                    is_up = True
+                else:
+                    # fallback: 퍼센트 부호로 판단 (blind 텍스트 제외)
+                    is_up = "-" not in change_text.split("%")[0] if "%" in change_text else True
 
                 # 숫자 추출: "30.46 +0.65%상승" -> ["30.46", "0.65"]
                 numbers = re.findall(r'[\d,]+\.?\d*', change_text)
@@ -206,18 +214,19 @@ class MarketDataCollector:
                 change_text = change_elem.get_text(strip=True).replace(",", "")
                 change = float(change_text) if change_text else 0.0
 
-            # 상승/하락 판단 (아이콘 클래스로)
+            # 상승/하락 판단 (head_info 클래스로)
             is_up = True
-            ico_up = item.select_one(".ico.up")
-            ico_down = item.select_one(".ico.down")
-            if ico_down:
-                is_up = False
-            elif ico_up:
-                is_up = True
+            head_info = item.select_one(".head_info")
+            if head_info:
+                head_classes = " ".join(head_info.get("class", []))
+                if "point_dn" in head_classes:
+                    is_up = False
+                elif "point_up" in head_classes:
+                    is_up = True
             else:
-                # 클래스에서 확인
-                item_class = " ".join(item.get("class", []))
-                if "down" in item_class:
+                # fallback: blind 텍스트 확인
+                blind_texts = [b.get_text(strip=True) for b in item.select(".blind")]
+                if "하락" in blind_texts:
                     is_up = False
 
             # 변동률 계산
@@ -287,18 +296,19 @@ class MarketDataCollector:
                 change_text = change_elem.get_text(strip=True).replace(",", "")
                 change = float(change_text) if change_text else 0.0
 
-            # 상승/하락 판단 (아이콘 클래스로)
+            # 상승/하락 판단 (head_info 클래스로)
             is_up = True
-            ico_up = item.select_one(".ico.up")
-            ico_down = item.select_one(".ico.down")
-            if ico_down:
-                is_up = False
-            elif ico_up:
-                is_up = True
+            head_info = item.select_one(".head_info")
+            if head_info:
+                head_classes = " ".join(head_info.get("class", []))
+                if "point_dn" in head_classes:
+                    is_up = False
+                elif "point_up" in head_classes:
+                    is_up = True
             else:
-                # 클래스에서 확인
-                item_class = " ".join(item.get("class", []))
-                if "down" in item_class:
+                # fallback: blind 텍스트 확인
+                blind_texts = [b.get_text(strip=True) for b in item.select(".blind")]
+                if "하락" in blind_texts:
                     is_up = False
 
             # 변동률 계산
