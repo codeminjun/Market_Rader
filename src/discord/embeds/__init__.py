@@ -38,6 +38,7 @@ from src.discord.embeds.briefing_embed import (
     create_closing_review_embed,
     create_morning_strategy_embed,
 )
+from src.discord.embeds.holiday_embed import create_holiday_embed
 
 __all__ = [
     # News
@@ -71,4 +72,6 @@ __all__ = [
     "create_assistant_briefing_embed",
     "create_closing_review_embed",
     "create_morning_strategy_embed",
+    # Holiday
+    "create_holiday_embed",
 ]

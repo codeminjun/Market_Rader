@@ -29,6 +29,7 @@ from src.discord.embeds.weekend_embed import (
     create_weekly_review_embed,
     create_weekly_preview_embed,
 )
+from src.discord.embeds.holiday_embed import create_holiday_embed
 
 __all__ = [
     # Sender
@@ -63,4 +64,6 @@ __all__ = [
     # Weekend Embeds
     "create_weekly_review_embed",
     "create_weekly_preview_embed",
+    # Holiday Embed
+    "create_holiday_embed",
 ]
