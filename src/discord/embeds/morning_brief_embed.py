@@ -4,6 +4,7 @@ Morning Brief용 Discord Embed 빌더
 from discord_webhook import DiscordEmbed
 
 from src.collectors.base import ContentItem
+from src.discord.embeds.news_embed import sanitize_title_for_link
 
 
 # Morning Brief 전용 색상 (골드)
@@ -92,7 +93,7 @@ def create_morning_brief_embed(
         brief_lines = []
         for item in remaining_items[:5]:
             broker = item.source
-            title = item.title
+            title = sanitize_title_for_link(item.title)
             if len(title) > 50:
                 title = title[:47] + "..."
 

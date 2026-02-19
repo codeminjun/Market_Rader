@@ -4,6 +4,7 @@
 from discord_webhook import DiscordEmbed
 
 from src.collectors.base import ContentItem, Priority
+from src.discord.embeds.news_embed import sanitize_title_for_link
 from src.utils.constants import EmbedColors
 
 
@@ -159,8 +160,8 @@ def create_youtube_list_embed(
         if len(channel) > 10:
             channel = channel[:8] + ".."
 
-        # 제목 길이 제한
-        item_title = item.title
+        # 제목 길이 제한 + 마크다운 링크 깨짐 방지
+        item_title = sanitize_title_for_link(item.title)
         if len(item_title) > 40:
             item_title = item_title[:37] + "..."
 

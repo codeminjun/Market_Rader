@@ -36,6 +36,15 @@ SIGNAL_NAMES = {
 }
 
 
+def sanitize_title_for_link(title: str) -> str:
+    """Discord 마크다운 링크용 제목 정리 - 대괄호를 제거/치환하여 링크 깨짐 방지"""
+    # [속보], [마켓PRO] 등 대괄호가 마크다운 링크 [제목](URL)과 충돌
+    title = title.replace("[", "").replace("]", "")
+    # 괄호도 URL 부분과 충돌 가능
+    title = title.replace("(", "（").replace(")", "）")
+    return title
+
+
 def get_importance_emoji(score: float, item: "ContentItem" = None) -> str:
     """중요도 점수에 따른 이모지 (커버드콜/배당 특별 강조)"""
     # 커버드콜/배당 뉴스 특별 강조
@@ -256,7 +265,8 @@ def create_breaking_news_embed(
     news_lines = []
     for item in items[:5]:
         keyword = item.extra_data.get("breaking_keyword", "속보")
-        line = f"🔴 **[{keyword.upper()}]** [{item.title[:40]}...]({item.url})"
+        safe_title = sanitize_title_for_link(item.title[:40])
+        line = f"🔴 **[{keyword.upper()}]** [{safe_title}...]({item.url})"
         news_lines.append(line)
 
     embed.description = "\n\n".join(news_lines)
@@ -289,7 +299,8 @@ def create_sector_news_embed(
     news_lines = []
     for i, item in enumerate(items[:5], 1):
         importance_emoji = get_importance_emoji(item.importance_score, item)
-        title = item.title[:40] + "..." if len(item.title) > 40 else item.title
+        title = sanitize_title_for_link(item.title)
+        title = title[:40] + "..." if len(title) > 40 else title
         news_lines.append(f"{importance_emoji} **{i}.** [{title}]({item.url})")
 
     embed.description = "\n".join(news_lines)
@@ -425,8 +436,8 @@ def create_news_list_embeds(
             emoji = get_importance_emoji(item.importance_score, item)
             covered_call_label = get_covered_call_label(item)
 
-            # 제목 길이 제한
-            item_title = item.title
+            # 제목 길이 제한 + 마크다운 링크 깨짐 방지
+            item_title = sanitize_title_for_link(item.title)
             if len(item_title) > 45:
                 item_title = item_title[:42] + "..."
 

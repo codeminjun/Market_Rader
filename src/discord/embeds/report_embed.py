@@ -4,6 +4,7 @@
 from discord_webhook import DiscordEmbed
 
 from src.collectors.base import ContentItem
+from src.discord.embeds.news_embed import sanitize_title_for_link
 from src.utils.constants import EmbedColors
 
 
@@ -157,8 +158,8 @@ def create_reports_list_embed(
         if broker and len(broker) > 8:
             broker = broker[:7] + ".."
 
-        # 제목 구성: 간결하게
-        item_title = item.title
+        # 제목 구성: 간결하게 + 마크다운 링크 깨짐 방지
+        item_title = sanitize_title_for_link(item.title)
         if len(item_title) > 45:
             item_title = item_title[:42] + "..."
 
