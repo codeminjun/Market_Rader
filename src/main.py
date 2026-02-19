@@ -314,21 +314,33 @@ def analyze_content(
         except Exception as e:
             logger.warning(f"News summarization failed: {e}")
 
-        # 3-1. 시장 시그널 분석 (AI)
+        # 3-1. 섹터 ETF 시세 수집
+        sector_etf_data = {}
         try:
-            result["market_signal"] = market_signal_analyzer.analyze_news_batch(all_news[:15])
+            sector_etf_data = market_data_collector.collect_sector_etfs()
+            if sector_etf_data:
+                logger.info(f"Collected {len(sector_etf_data)} sector ETF prices")
+        except Exception as e:
+            logger.warning(f"Sector ETF collection failed: {e}")
+
+        # 3-2. 시장 시그널 분석 (AI + ETF 시세)
+        try:
+            result["market_signal"] = market_signal_analyzer.analyze_news_batch(
+                all_news[:15],
+                sector_etf_data=sector_etf_data,
+            )
             if result["market_signal"]:
                 logger.info(f"Market signal: {result['market_signal'].get('overall_signal')}")
         except Exception as e:
             logger.warning(f"Market signal analysis failed: {e}")
 
-        # 3-2. 긴급 뉴스 감지
+        # 3-3. 긴급 뉴스 감지
         try:
             result["breaking_news"] = market_signal_analyzer.detect_breaking_news(all_news)
         except Exception as e:
             logger.warning(f"Breaking news detection failed: {e}")
 
-        # 3-3. 섹터별 분류
+        # 3-4. 섹터별 분류
         try:
             result["sector_news"] = market_signal_analyzer.categorize_by_sector(all_news)
         except Exception as e:

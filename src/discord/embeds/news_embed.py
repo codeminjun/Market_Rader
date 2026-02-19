@@ -198,11 +198,22 @@ def create_market_signal_embed(
 
     # 섹터별 시그널
     sector_signals = signal_data.get("sector_signals", {})
+    sector_etf_data = signal_data.get("sector_etf_data", {})
     if sector_signals:
         sector_lines = []
         for sector, sector_signal in list(sector_signals.items())[:6]:
             sector_emoji = SIGNAL_EMOJIS.get(sector_signal, "➡️")
-            sector_lines.append(f"{sector_emoji} **{sector}**: {SIGNAL_NAMES.get(sector_signal, sector_signal)}")
+            signal_text = SIGNAL_NAMES.get(sector_signal, sector_signal)
+
+            # ETF 실시간 시세가 있으면 함께 표시
+            etf = sector_etf_data.get(sector)
+            if etf:
+                sign = "+" if etf.change_percent >= 0 else ""
+                sector_lines.append(
+                    f"{sector_emoji} **{sector}**: {signal_text} | {etf.etf_name} {sign}{etf.change_percent:.2f}%"
+                )
+            else:
+                sector_lines.append(f"{sector_emoji} **{sector}**: {signal_text}")
 
         if sector_lines:
             embed.add_embed_field(

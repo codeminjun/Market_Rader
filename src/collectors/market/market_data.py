@@ -31,6 +31,18 @@ class ExchangeRate:
 
 
 @dataclass
+class SectorETFData:
+    """섹터 ETF 시세 데이터"""
+    sector: str             # 섹터명 (반도체, 2차전지 등)
+    etf_name: str           # ETF명 (KODEX 반도체 등)
+    etf_code: str           # 종목코드 (091160 등)
+    price: float            # 현재가
+    change: float           # 변동폭
+    change_percent: float   # 변동률 (%)
+    is_up: bool             # 상승 여부
+
+
+@dataclass
 class MarketSummary:
     """시장 종합 데이터"""
     kospi: Optional[IndexData] = None
@@ -40,6 +52,7 @@ class MarketSummary:
     eur_krw: Optional[ExchangeRate] = None
     wti: Optional[IndexData] = None  # 유가
     gold: Optional[IndexData] = None  # 금
+    sector_etfs: Optional[dict] = None  # {섹터명: SectorETFData}
     timestamp: Optional[str] = None
 
 
@@ -48,6 +61,19 @@ class MarketDataCollector:
 
     SISE_URL = "https://finance.naver.com/sise/"
     MARKETINDEX_URL = "https://finance.naver.com/marketindex/"
+
+    # 섹터 → ETF 매핑
+    SECTOR_ETF_MAP = {
+        "반도체": ("KODEX 반도체", "091160"),
+        "2차전지": ("KODEX 2차전지산업", "305720"),
+        "AI/소프트웨어": ("KODEX AI반도체핵심장비", "395160"),
+        "자동차": ("KODEX 자동차", "091180"),
+        "바이오": ("KODEX 바이오", "244580"),
+        "금융": ("KODEX 은행", "091170"),
+        "방산": ("TIGER K방산&우주", "463250"),
+        "조선": ("TIGER 조선TOP10", "494670"),
+        "에너지": ("KODEX 에너지화학", "117460"),
+    }
 
     def __init__(self):
         self.headers = {
@@ -75,6 +101,9 @@ class MarketDataCollector:
         commodities = self._collect_commodities()
         summary.wti = commodities.get("wti")
         summary.gold = commodities.get("gold")
+
+        # 4. 섹터 ETF 시세
+        summary.sector_etfs = self.collect_sector_etfs()
 
         from datetime import datetime
         summary.timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -330,6 +359,131 @@ class MarketDataCollector:
         except Exception as e:
             logger.debug(f"Failed to parse commodity item: {e}")
             return None
+
+    def collect_sector_etfs(self) -> dict[str, SectorETFData]:
+        """
+        섹터 ETF 시세 수집 (Naver Finance Polling API)
+
+        Returns:
+            {"반도체": SectorETFData, "2차전지": SectorETFData, ...}
+            실패 시 빈 dict 반환
+        """
+        etf_codes = [code for _, code in self.SECTOR_ETF_MAP.values()]
+        query = ",".join(etf_codes)
+        url = f"https://polling.finance.naver.com/api/realtime?query=SERVICE_ITEM:{query}"
+
+        try:
+            response = self._session.get(url, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+
+            # 종목코드 → 섹터 역매핑
+            code_to_sector = {code: sector for sector, (_, code) in self.SECTOR_ETF_MAP.items()}
+
+            result = {}
+            items = data.get("result", {}).get("areas", [])
+            for area in items:
+                for item in area.get("datas", []):
+                    code = item.get("cd", "")
+                    if code not in code_to_sector:
+                        continue
+
+                    sector = code_to_sector[code]
+                    etf_name, etf_code = self.SECTOR_ETF_MAP[sector]
+
+                    price = float(item.get("nv", 0))       # 현재가
+                    change = float(item.get("cv", 0))       # 변동폭
+                    change_percent = float(item.get("cr", 0))  # 변동률
+                    # aq: "상승"/"하락"/"보합" 또는 sv: 부호로 판단
+                    is_up = change >= 0
+
+                    result[sector] = SectorETFData(
+                        sector=sector,
+                        etf_name=etf_name,
+                        etf_code=etf_code,
+                        price=price,
+                        change=change,
+                        change_percent=change_percent,
+                        is_up=is_up,
+                    )
+
+            if result:
+                logger.info(f"Collected {len(result)} sector ETF prices via Polling API")
+                return result
+
+            # Polling API가 빈 결과를 반환한 경우 fallback
+            logger.warning("Polling API returned empty data, trying HTML fallback")
+            return self._collect_sector_etfs_html()
+
+        except Exception as e:
+            logger.warning(f"Polling API failed: {e}, trying HTML fallback")
+            return self._collect_sector_etfs_html()
+
+    def _collect_sector_etfs_html(self) -> dict[str, SectorETFData]:
+        """
+        섹터 ETF 시세 HTML 스크래핑 (fallback)
+
+        개별 종목 페이지에서 시세를 가져옴
+        """
+        import re
+        import time
+
+        result = {}
+
+        for i, (sector, (etf_name, etf_code)) in enumerate(self.SECTOR_ETF_MAP.items()):
+            # rate limit 방지: 두 번째 요청부터 딜레이
+            if i > 0:
+                time.sleep(0.3)
+
+            try:
+                url = f"https://finance.naver.com/item/main.naver?code={etf_code}"
+                response = self._session.get(url, timeout=10)
+                response.raise_for_status()
+                soup = BeautifulSoup(response.text, "lxml")
+
+                # 현재가
+                price_elem = soup.select_one("p.no_today .blind")
+                if not price_elem:
+                    continue
+                price = float(price_elem.get_text(strip=True).replace(",", ""))
+
+                # 변동폭
+                change_elem = soup.select_one("p.no_exday .blind")
+                change = 0.0
+                is_up = True
+                if change_elem:
+                    change_text = change_elem.get_text(strip=True)
+                    # "하락 150 -0.54%" 또는 "상승 200 +0.72%" 형태
+                    if "하락" in change_text:
+                        is_up = False
+                    numbers = re.findall(r'[\d,]+\.?\d*', change_text)
+                    if numbers:
+                        change = float(numbers[0].replace(",", ""))
+                        if not is_up:
+                            change = -change
+
+                # 변동률 계산
+                prev_price = price - change
+                change_percent = (change / prev_price * 100) if prev_price != 0 else 0.0
+
+                result[sector] = SectorETFData(
+                    sector=sector,
+                    etf_name=etf_name,
+                    etf_code=etf_code,
+                    price=price,
+                    change=change,
+                    change_percent=round(change_percent, 2),
+                    is_up=is_up,
+                )
+
+            except Exception as e:
+                logger.debug(f"Failed to scrape ETF {etf_name} ({etf_code}): {e}")
+                continue
+
+        if result:
+            logger.info(f"Collected {len(result)} sector ETF prices via HTML fallback")
+
+        return result
 
 
 # 전역 인스턴스
