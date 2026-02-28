@@ -44,8 +44,9 @@ class ScheduleSettings:
     MANUAL_TITLE = "📰 주식 뉴스 브리핑"
 
     # 주말 스케줄
-    SATURDAY_TITLE = "📊 이번 주 시장 리뷰"  # 토요일: 주간 요약
-    SUNDAY_TITLE = "🔮 다음 주 시장 전망"    # 일요일: 주간 전망
+    SATURDAY_TITLE = "📊 이번 주 시장 리뷰"  # 토요일: 주간 리뷰 (1PM KST 1회)
+    SUNDAY_TITLE = "🔮 다음 주 시장 전망"    # 일요일: 주간 전망 (1PM KST 1회)
+    WEEKEND_HOUR = 13  # 주말 알림 시간 (토/일 오후 1시)
 
     # 휴장일 스케줄
     HOLIDAY_TITLE = "🏖️ 시장 휴일 안내"

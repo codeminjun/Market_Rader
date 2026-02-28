@@ -3,7 +3,7 @@
 한국(KRX) 및 미국(NYSE) 휴장일을 판별
 """
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import holidays
 
@@ -64,3 +64,41 @@ def check_market_holidays(target_date: date | None = None) -> MarketHolidayInfo:
 
     info.is_holiday = info.krx_closed or info.nyse_closed
     return info
+
+
+def get_next_week_holidays(reference_date: date | None = None) -> list[dict]:
+    """
+    다음 주(월~금) 휴장일 목록 반환
+
+    Args:
+        reference_date: 기준 날짜 (None이면 오늘)
+
+    Returns:
+        [{"date": "02/24 (월)", "krx": "삼일절", "nyse": ""}, ...]
+        휴장일이 없으면 빈 리스트
+    """
+    if reference_date is None:
+        reference_date = date.today()
+    elif isinstance(reference_date, datetime):
+        reference_date = reference_date.date()
+
+    # 다음 주 월요일 계산
+    days_until_monday = (7 - reference_date.weekday()) % 7
+    if days_until_monday == 0:
+        days_until_monday = 7
+    next_monday = reference_date + timedelta(days=days_until_monday)
+
+    weekday_names = ["월", "화", "수", "목", "금"]
+    result = []
+
+    for i in range(5):  # 월~금
+        day = next_monday + timedelta(days=i)
+        info = check_market_holidays(day)
+        if info.is_holiday:
+            result.append({
+                "date": f"{day.strftime('%m/%d')} ({weekday_names[i]})",
+                "krx": info.krx_holiday_name,
+                "nyse": info.nyse_holiday_name,
+            })
+
+    return result
