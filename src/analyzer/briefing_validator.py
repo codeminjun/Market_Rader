@@ -21,34 +21,11 @@ class ValidationResult:
 
 
 class BriefingValidator:
-    """브리핑 검증기"""
+    """브리핑 검증기 (키워드/출처 검증 - 수치는 AI가 생성하지 않으므로 검증 불필요)"""
 
     # 검증 임계값
-    NUMERIC_TOLERANCE = 0.02      # 숫자 허용 오차 (2%)
     MIN_KEYWORD_MATCH = 0.5       # 최소 키워드 매칭률 (50%)
     MIN_PASS_SCORE = 0.7          # 최소 통과 점수
-
-    # 숫자 추출 패턴
-    NUMBER_PATTERNS = {
-        "kospi": [
-            r"코스피\s*(?:지수)?[:\s]*([0-9,]+(?:\.[0-9]+)?)",
-            r"KOSPI\s*[:\s]*([0-9,]+(?:\.[0-9]+)?)",
-            r"코스피가?\s*([0-9,]+(?:\.[0-9]+)?)\s*(?:포인트|pt)?",
-        ],
-        "kosdaq": [
-            r"코스닥\s*(?:지수)?[:\s]*([0-9,]+(?:\.[0-9]+)?)",
-            r"KOSDAQ\s*[:\s]*([0-9,]+(?:\.[0-9]+)?)",
-            r"코스닥이?\s*([0-9,]+(?:\.[0-9]+)?)\s*(?:포인트|pt)?",
-        ],
-        "usd_krw": [
-            r"(?:원/?달러|달러/?원|USD/?KRW|환율)\s*[:\s]*([0-9,]+(?:\.[0-9]+)?)\s*원?",
-            r"달러\s*(?:환율)?[:\s]*([0-9,]+(?:\.[0-9]+)?)",
-            r"([0-9,]+(?:\.[0-9]+)?)\s*원\s*(?:대|/)\s*달러",
-        ],
-        "change_percent": [
-            r"([+-]?[0-9]+(?:\.[0-9]+)?)\s*%\s*(?:상승|하락|변동)?",
-        ],
-    }
 
     # 회사/종목명 추출 패턴
     COMPANY_PATTERN = re.compile(
@@ -60,30 +37,17 @@ class BriefingValidator:
         re.IGNORECASE
     )
 
-    def __init__(self):
-        self._compiled_patterns = {}
-        self._compile_patterns()
-
-    def _compile_patterns(self):
-        """정규표현식 패턴 사전 컴파일"""
-        for key, patterns in self.NUMBER_PATTERNS.items():
-            self._compiled_patterns[key] = [
-                re.compile(p, re.IGNORECASE) for p in patterns
-            ]
-
     def validate_briefing(
         self,
         briefing_text: str,
-        market_data: Optional[dict] = None,
         news_items: Optional[list[ContentItem]] = None,
         report_items: Optional[list[ContentItem]] = None,
     ) -> ValidationResult:
         """
-        브리핑 내용 종합 검증
+        브리핑 내용 종합 검증 (키워드/출처만 검증)
 
         Args:
             briefing_text: 검증할 브리핑 텍스트 (summary + key_points 등 합친 것)
-            market_data: 실제 수집된 시장 데이터
             news_items: 실제 수집된 뉴스 항목
             report_items: 실제 수집된 리포트 항목
 
@@ -96,20 +60,7 @@ class BriefingValidator:
         checks_passed = 0
         total_checks = 0
 
-        # 1. 숫자 데이터 검증 (시장 데이터)
-        if market_data:
-            numeric_result = self._validate_numeric_data(briefing_text, market_data)
-            details["numeric"] = numeric_result
-
-            if numeric_result.get("errors"):
-                errors.extend(numeric_result["errors"])
-            if numeric_result.get("warnings"):
-                warnings.extend(numeric_result["warnings"])
-
-            checks_passed += numeric_result.get("passed", 0)
-            total_checks += numeric_result.get("total", 0)
-
-        # 2. 키워드/회사명 검증 (뉴스에 실제로 있는지)
+        # 1. 키워드/회사명 검증 (뉴스에 실제로 있는지)
         if news_items or report_items:
             keyword_result = self._validate_keywords(
                 briefing_text, news_items or [], report_items or []
@@ -124,7 +75,7 @@ class BriefingValidator:
             checks_passed += keyword_result.get("passed", 0)
             total_checks += keyword_result.get("total", 0)
 
-        # 3. 출처 언급 검증
+        # 2. 출처 언급 검증
         source_result = self._validate_sources(briefing_text, news_items or [])
         details["sources"] = source_result
 
@@ -148,101 +99,6 @@ class BriefingValidator:
             logger.info(f"Briefing validation PASSED (score: {score:.2f})")
         else:
             logger.warning(f"Briefing validation FAILED (score: {score:.2f}, errors: {errors})")
-
-        return result
-
-    def _validate_numeric_data(self, text: str, market_data: dict) -> dict:
-        """
-        숫자 데이터 검증 (코스피, 코스닥, 환율 등)
-
-        Returns:
-            {
-                "passed": int,
-                "total": int,
-                "errors": list,
-                "warnings": list,
-                "checks": list
-            }
-        """
-        result = {
-            "passed": 0,
-            "total": 0,
-            "errors": [],
-            "warnings": [],
-            "checks": [],
-        }
-
-        # 코스피 검증
-        if market_data.get("kospi"):
-            actual_value = market_data["kospi"].get("value")
-            if actual_value:
-                extracted = self._extract_number(text, "kospi")
-                if extracted:
-                    result["total"] += 1
-                    is_match, diff = self._compare_numbers(extracted, actual_value)
-                    check = {
-                        "type": "kospi",
-                        "extracted": extracted,
-                        "actual": actual_value,
-                        "diff_percent": diff,
-                        "passed": is_match,
-                    }
-                    result["checks"].append(check)
-
-                    if is_match:
-                        result["passed"] += 1
-                    else:
-                        result["errors"].append(
-                            f"코스피 수치 불일치: 브리핑({extracted:,.2f}) vs 실제({actual_value:,.2f}), 차이 {diff:.1f}%"
-                        )
-
-        # 코스닥 검증
-        if market_data.get("kosdaq"):
-            actual_value = market_data["kosdaq"].get("value")
-            if actual_value:
-                extracted = self._extract_number(text, "kosdaq")
-                if extracted:
-                    result["total"] += 1
-                    is_match, diff = self._compare_numbers(extracted, actual_value)
-                    check = {
-                        "type": "kosdaq",
-                        "extracted": extracted,
-                        "actual": actual_value,
-                        "diff_percent": diff,
-                        "passed": is_match,
-                    }
-                    result["checks"].append(check)
-
-                    if is_match:
-                        result["passed"] += 1
-                    else:
-                        result["errors"].append(
-                            f"코스닥 수치 불일치: 브리핑({extracted:,.2f}) vs 실제({actual_value:,.2f}), 차이 {diff:.1f}%"
-                        )
-
-        # 환율 검증
-        if market_data.get("usd_krw"):
-            actual_value = market_data["usd_krw"].get("value")
-            if actual_value:
-                extracted = self._extract_number(text, "usd_krw")
-                if extracted:
-                    result["total"] += 1
-                    is_match, diff = self._compare_numbers(extracted, actual_value)
-                    check = {
-                        "type": "usd_krw",
-                        "extracted": extracted,
-                        "actual": actual_value,
-                        "diff_percent": diff,
-                        "passed": is_match,
-                    }
-                    result["checks"].append(check)
-
-                    if is_match:
-                        result["passed"] += 1
-                    else:
-                        result["errors"].append(
-                            f"환율 수치 불일치: 브리핑({extracted:,.2f}) vs 실제({actual_value:,.2f}), 차이 {diff:.1f}%"
-                        )
 
         return result
 
@@ -348,37 +204,6 @@ class BriefingValidator:
             result["warnings"].append("브리핑에 출처 언급이 없음 - 출처 명시 권장")
 
         return result
-
-    def _extract_number(self, text: str, number_type: str) -> Optional[float]:
-        """텍스트에서 특정 유형의 숫자 추출"""
-        patterns = self._compiled_patterns.get(number_type, [])
-
-        for pattern in patterns:
-            match = pattern.search(text)
-            if match:
-                try:
-                    # 쉼표 제거 후 float 변환
-                    num_str = match.group(1).replace(",", "")
-                    return float(num_str)
-                except (ValueError, IndexError):
-                    continue
-
-        return None
-
-    def _compare_numbers(self, extracted: float, actual: float) -> tuple[bool, float]:
-        """
-        두 숫자 비교
-
-        Returns:
-            (일치 여부, 차이 퍼센트)
-        """
-        if actual == 0:
-            return extracted == 0, 0.0
-
-        diff_percent = abs(extracted - actual) / actual * 100
-        is_match = diff_percent <= (self.NUMERIC_TOLERANCE * 100)
-
-        return is_match, diff_percent
 
     def get_briefing_text(self, briefing) -> str:
         """MarketBriefing 객체에서 검증용 텍스트 추출"""

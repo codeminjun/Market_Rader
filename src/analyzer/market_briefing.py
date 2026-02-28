@@ -7,7 +7,7 @@ from typing import Optional
 from dataclasses import dataclass, field
 
 from src.collectors.base import ContentItem
-from src.analyzer.groq_client import groq_client
+from src.analyzer.gemini_client import gemini_client
 from src.utils.logger import logger
 
 
@@ -63,22 +63,21 @@ class MarketBriefingGenerator:
    - 위 데이터에 없는 숫자 사용 금지"""
 
     def __init__(self):
-        self.client = groq_client
+        self.client = gemini_client
 
     def generate_closing_review(
         self,
         news_items: list[ContentItem],
         report_items: list[ContentItem] = None,
-        market_data: dict = None,
     ) -> Optional[MarketBriefing]:
         """
         장 마감 리뷰 생성 (오후 5시용)
-        실제 뉴스/리포트 내용을 분석하여 작성
+        실제 뉴스/리포트 내용을 분석하여 정성적 리뷰 작성
+        (수치는 별도 market_close_embed에서 크롤링 데이터로 직접 표시)
 
         Args:
             news_items: 오늘의 주요 뉴스
             report_items: 오늘의 리포트 (AI 분석 포함)
-            market_data: 시장 데이터 (코스피, 환율 등)
 
         Returns:
             MarketBriefing 객체
@@ -89,15 +88,11 @@ class MarketBriefingGenerator:
         # 실제 데이터 기반 텍스트 생성
         news_text, news_sources = self._format_news_detailed(news_items[:10])
         report_text, report_sources = self._format_reports_detailed(report_items[:5]) if report_items else ("", [])
-        market_text = self._format_market_data(market_data) if market_data else ""
 
         all_sources = news_sources + report_sources
 
         prompt = f"""아래 제공된 실제 데이터만을 기반으로 오늘의 장 마감 리뷰를 작성해주세요.
 모든 문장은 '해요체'로 친근하게 작성하세요.
-
-=== 오늘의 시장 데이터 (정확한 수치) ===
-{market_text if market_text else "데이터 없음"}
 
 === 오늘의 주요 뉴스 (실제 기사) ===
 {news_text}
@@ -108,7 +103,7 @@ class MarketBriefingGenerator:
 위 데이터를 종합 분석하여 다음 JSON 형식으로 응답해주세요:
 {{
     "greeting": "오늘 장 마감 인사 (해요체, 친근하게, 1문장). 예: '오늘 장이 마감됐어요.'",
-    "summary": "오늘 시장 핵심 흐름 요약 (해요체, 2-3문장). 예: '코스피가 상승했어요. ~한 이유예요.'",
+    "summary": "오늘 시장 핵심 흐름 요약 (해요체, 2-3문장). 수치 없이 '상승했어요', '하락했어요' 같은 정성적 표현만 사용하세요.",
     "key_points": ["핵심 포인트 3-5개 (해요체, 출처 명시). 예: '반도체 업황이 좋아지고 있어요 (한경)'"],
     "action_items": ["내일 주목할 점 2-3개 (해요체). 예: '내일은 ~를 눈여겨보면 좋아요'"],
     "closing": "마무리 인사 (해요체, 1문장). 예: '내일도 좋은 하루 보내세요!'",
@@ -118,9 +113,9 @@ class MarketBriefingGenerator:
 === 절대 준수 사항 ===
 1. 해요체 필수: 모든 문장을 '~해요', '~이에요', '~예요' 형태로 끝내세요
 2. 🌟 우선 반영: "사용자 관심 뉴스" 섹션 기사를 반드시 summary와 key_points에 포함하세요
-3. 숫자 정확성: 위 "시장 데이터"의 수치를 그대로 사용하세요
+3. 수치 금지: 코스피/코스닥 지수, 환율, 등락률 등 구체적 숫자를 절대 쓰지 마세요. 수치는 별도로 표시돼요.
 4. 출처 필수: 모든 정보에 출처를 괄호로 표시하세요
-5. 금지: 위 데이터에 없는 정보/숫자 사용 금지"""
+5. 금지: 위 데이터에 없는 정보 사용 금지"""
 
         try:
             result = self.client.generate_json(
@@ -390,27 +385,6 @@ class MarketBriefingGenerator:
 
         return "\n".join(lines), sources
 
-    def _format_market_data(self, market_data: dict) -> str:
-        """시장 데이터를 텍스트로 변환"""
-        lines = []
-
-        if "kospi" in market_data and market_data["kospi"]:
-            kospi = market_data["kospi"]
-            sign = "+" if kospi.get("change", 0) >= 0 else ""
-            status = "상승" if kospi.get("change", 0) >= 0 else "하락"
-            lines.append(f"코스피: {kospi.get('value', 0):,.2f}포인트 ({sign}{kospi.get('change_percent', 0):.2f}% {status})")
-
-        if "kosdaq" in market_data and market_data["kosdaq"]:
-            kosdaq = market_data["kosdaq"]
-            sign = "+" if kosdaq.get("change", 0) >= 0 else ""
-            status = "상승" if kosdaq.get("change", 0) >= 0 else "하락"
-            lines.append(f"코스닥: {kosdaq.get('value', 0):,.2f}포인트 ({sign}{kosdaq.get('change_percent', 0):.2f}% {status})")
-
-        if "usd_krw" in market_data and market_data["usd_krw"]:
-            usd = market_data["usd_krw"]
-            lines.append(f"원/달러 환율: {usd.get('value', 0):,.2f}원")
-
-        return "\n".join(lines) if lines else ""
 
 
 # 전역 인스턴스
