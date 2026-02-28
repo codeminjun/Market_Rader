@@ -1,8 +1,8 @@
 """
 AI 분석 모듈
-Groq API를 사용한 요약 및 중요도 평가
+Gemini API를 사용한 요약 및 중요도 평가
 """
-from src.analyzer.groq_client import GroqClient, groq_client
+from src.analyzer.gemini_client import GeminiClient, gemini_client
 from src.analyzer.news_summarizer import (
     NewsSummarizer,
     ReportSummarizer,
@@ -22,8 +22,8 @@ from src.analyzer.market_briefing import (
 
 __all__ = [
     # Groq Client
-    "GroqClient",
-    "groq_client",
+    "GeminiClient",
+    "gemini_client",
     # News Summarizer
     "NewsSummarizer",
     "ReportSummarizer",

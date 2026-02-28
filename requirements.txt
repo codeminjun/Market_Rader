@@ -8,7 +8,7 @@ lxml>=5.0.0
 youtube-transcript-api>=0.6.0
 
 # AI Analysis
-groq>=0.4.0
+google-genai>=1.0.0
 
 # PDF Processing & OCR
 PyMuPDF>=1.23.0

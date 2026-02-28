@@ -7,7 +7,7 @@ from functools import lru_cache
 from typing import Optional
 
 from src.collectors.base import ContentItem, Priority
-from src.analyzer.groq_client import groq_client
+from src.analyzer.gemini_client import gemini_client
 from src.utils.logger import logger
 from src.utils.constants import ImportanceThresholds
 from config.settings import get_news_sources, get_journalist_priority
@@ -95,7 +95,7 @@ class ImportanceScorer:
     ]
 
     def __init__(self):
-        self.client = groq_client
+        self.client = gemini_client
         self._load_keywords_from_config()
         self._load_journalist_priority()
         self._load_analyst_priority()

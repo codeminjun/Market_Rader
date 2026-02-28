@@ -22,9 +22,9 @@ class Settings:
     # Discord
     DISCORD_WEBHOOK_URL: str = os.getenv("DISCORD_WEBHOOK_URL", "")
 
-    # Groq API
-    GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
-    GROQ_MODEL: str = "llama-3.3-70b-versatile"
+    # Gemini API
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    GEMINI_MODEL: str = "gemini-2.5-flash"
 
     # NewsAPI (Optional)
     NEWSAPI_KEY: str = os.getenv("NEWSAPI_KEY", "")
@@ -44,14 +44,17 @@ class Settings:
     # Cache file path
     SENT_ITEMS_FILE: Path = DATA_DIR / "sent_items.json"
 
+    # Weekly archive file path
+    WEEKLY_ARCHIVE_FILE: Path = DATA_DIR / "weekly_archive.json"
+
     @classmethod
     def validate(cls) -> list[str]:
         """필수 설정 검증"""
         errors = []
         if not cls.DISCORD_WEBHOOK_URL:
             errors.append("DISCORD_WEBHOOK_URL is required")
-        if not cls.GROQ_API_KEY:
-            errors.append("GROQ_API_KEY is required")
+        if not cls.GEMINI_API_KEY:
+            errors.append("GEMINI_API_KEY is required")
         return errors
 
 

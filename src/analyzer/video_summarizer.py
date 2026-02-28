@@ -6,7 +6,7 @@ from typing import Optional
 
 from src.collectors.base import ContentItem
 from src.collectors.youtube.transcript import transcript_extractor, extract_video_id
-from src.analyzer.groq_client import groq_client
+from src.analyzer.gemini_client import gemini_client
 from src.utils.logger import logger
 
 
@@ -18,7 +18,7 @@ class VideoSummarizer:
 응답은 항상 한국어로 작성합니다."""
 
     def __init__(self):
-        self.client = groq_client
+        self.client = gemini_client
         self.transcript_extractor = transcript_extractor
 
     def summarize_video(

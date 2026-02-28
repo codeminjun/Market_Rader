@@ -6,7 +6,7 @@ from typing import Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from src.collectors.base import ContentItem
-from src.analyzer.groq_client import groq_client
+from src.analyzer.gemini_client import gemini_client
 from src.utils.logger import logger
 
 
@@ -18,7 +18,7 @@ class ReportAnalyzer:
 정확하고 객관적으로 분석합니다."""
 
     def __init__(self):
-        self.client = groq_client
+        self.client = gemini_client
 
     def analyze_report(self, item: ContentItem) -> Optional[dict]:
         """

@@ -107,6 +107,6 @@ GitHub Actions에서는 워크플로우에서 자동 설치됨 (`tesseract-ocr`,
 
 ## API 키 (환경변수)
 - `DISCORD_WEBHOOK_URL` - Discord Webhook URL
-- `GROQ_API_KEY` - Groq AI API 키
+- `GEMINI_API_KEY` - Google Gemini API 키
 - `NEWSAPI_KEY` - NewsAPI 키 (선택)
 - `NAVER_CLIENT_ID` / `NAVER_CLIENT_SECRET` - 네이버 API (선택)

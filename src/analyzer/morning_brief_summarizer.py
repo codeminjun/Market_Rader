@@ -5,7 +5,7 @@ Morning Brief 요약기
 from typing import Optional
 
 from src.collectors.base import ContentItem
-from src.analyzer.groq_client import groq_client
+from src.analyzer.gemini_client import gemini_client
 from src.utils.logger import logger
 
 
@@ -64,7 +64,7 @@ class MorningBriefSummarizer:
 3. 간결하고 명확하게 작성"""
 
         try:
-            result = groq_client.generate_json(
+            result = gemini_client.generate_json(
                 prompt=prompt,
                 system_prompt=self.SYSTEM_PROMPT,
                 max_tokens=1000,
@@ -160,7 +160,7 @@ class MorningBriefSummarizer:
 }}"""
 
         try:
-            result = groq_client.generate_json(
+            result = gemini_client.generate_json(
                 prompt=prompt,
                 system_prompt=self.SYSTEM_PROMPT,
                 max_tokens=800,

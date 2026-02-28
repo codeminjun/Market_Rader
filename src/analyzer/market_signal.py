@@ -7,7 +7,7 @@ from enum import Enum
 from typing import Optional
 
 from src.collectors.base import ContentItem
-from src.analyzer.groq_client import groq_client
+from src.analyzer.gemini_client import gemini_client
 from src.utils.logger import logger
 
 
@@ -79,7 +79,7 @@ class MarketSignalAnalyzer:
     }
 
     def __init__(self):
-        self.client = groq_client
+        self.client = gemini_client
 
     def analyze_news_batch(
         self,

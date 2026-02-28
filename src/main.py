@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT_DIR))
 from config.settings import settings, get_news_sources, get_youtube_channels
 from src.utils.logger import logger
 from src.utils.cache import cache
+from src.utils.weekly_archive import weekly_archive
 
 # Collectors
 from src.collectors.base import ContentItem, ContentType
@@ -320,8 +321,18 @@ def analyze_content(
             sector_etf_data = market_data_collector.collect_sector_etfs()
             if sector_etf_data:
                 logger.info(f"Collected {len(sector_etf_data)} sector ETF prices")
+                result["sector_etf_data"] = sector_etf_data
         except Exception as e:
             logger.warning(f"Sector ETF collection failed: {e}")
+
+        # 3-1-1. 시장 지수 수집 (코스피/코스닥/환율 - 주간 아카이브용)
+        try:
+            market_data = market_data_collector.collect()
+            if market_data and (market_data.kospi or market_data.kosdaq):
+                result["market_data"] = market_data
+                logger.info("Collected market index data for archive")
+        except Exception as e:
+            logger.warning(f"Market index collection failed: {e}")
 
         # 3-2. 시장 시그널 분석 (AI + ETF 시세)
         try:
@@ -439,6 +450,32 @@ def get_schedule_type() -> tuple[str, str]:
     return ("manual", ScheduleSettings.MANUAL_TITLE)
 
 
+def _build_live_market_history(live_market) -> dict:
+    """실시간 시장 데이터를 이력 dict 형태로 변환 (폴백용)"""
+    today_key = datetime.now().strftime("%Y-%m-%d")
+    day_data = {}
+
+    for attr, key in [
+        ("kospi", "kospi"),
+        ("kosdaq", "kosdaq"),
+        ("usd_krw", "usd_krw"),
+        ("jpy_krw", "jpy_krw"),
+        ("eur_krw", "eur_krw"),
+        ("wti", "wti"),
+        ("gold", "gold"),
+    ]:
+        data = getattr(live_market, attr, None)
+        if data:
+            day_data[key] = {
+                "value": data.value,
+                "change": data.change,
+                "change_percent": data.change_percent,
+                "is_up": data.is_up,
+            }
+
+    return {today_key: day_data} if day_data else {}
+
+
 def send_weekend_to_discord(analyzed: dict, schedule_type: str) -> bool:
     """주말 전용 Discord 전송 (토요일: 리뷰, 일요일: 전망)"""
     from src.analyzer.weekly_summarizer import weekly_summarizer, weekly_preview
@@ -454,21 +491,129 @@ def send_weekend_to_discord(analyzed: dict, schedule_type: str) -> bool:
     reports = analyzed.get("reports", [])
 
     if schedule_type == "saturday":
-        # 토요일: 주간 리뷰
-        logger.info("Generating weekly review...")
-        review_data = weekly_summarizer.generate_weekly_review(
-            news_items=all_news[:25],
-            report_items=reports[:10],
-        )
-        embeds = create_weekly_review_embed(now, review_data)
+        # 토요일 중복 전송 방지
+        today_key = now.strftime("%Y-%m-%d")
+        review_cache_id = f"weekly_review_{today_key}"
+        if cache.is_sent(review_cache_id, "weekend"):
+            logger.info(f"Saturday weekly review already sent today ({today_key}). Skipping.")
+            return True
+
+        # 토요일: 주간 리뷰 (아카이브 기반)
+        archive_count = weekly_archive.get_items_count()
+        logger.info(f"Weekly archive has {archive_count} items")
+
+        if archive_count > 0:
+            # 아카이브에서 이번 주 뉴스/리포트 로드
+            archived_news = weekly_archive.get_top_items(max_count=30, content_type="news")
+            archived_reports = weekly_archive.get_top_items(max_count=10, content_type="report")
+            archived_items = archived_news + archived_reports
+            sector_etf_history = weekly_archive.get_sector_etf_history()
+            market_index_history = weekly_archive.get_market_index_history()
+            weekly_summary_data = weekly_archive.get_weekly_summary()
+            logger.info(f"Using archive: {len(archived_news)} news + {len(archived_reports)} reports + {len(sector_etf_history)} days ETF data + {len(market_index_history)} days index data")
+
+            # AI 정성적 분석만 요청
+            review_data = weekly_summarizer.generate_weekly_review(
+                archived_items=archived_items,
+                live_news=all_news[:10],
+                sector_etf_history=sector_etf_history,
+                market_index_history=market_index_history,
+            )
+
+            # Embed에 명시적 파라미터로 원본 데이터 전달
+            embeds = create_weekly_review_embed(
+                date=now,
+                review_data=review_data,
+                archived_items=archived_items,
+                weekly_summary_data=weekly_summary_data,
+                market_index_history=market_index_history,
+                sector_etf_history=sector_etf_history,
+            )
+
+            # 리뷰 생성 후 아카이브 리셋
+            weekly_archive.reset()
+        else:
+            # 아카이브가 비어있으면 실시간 뉴스 + 실시간 시세로 폴백
+            logger.warning("Weekly archive is empty, falling back to live data")
+
+            live_market_history = {}
+            live_sector_history = {}
+            try:
+                live_market = market_data_collector.collect()
+                if live_market and (live_market.kospi or live_market.kosdaq):
+                    live_market_history = _build_live_market_history(live_market)
+                    logger.info("Collected live market index data for weekly review")
+            except Exception as e:
+                logger.warning(f"Failed to collect live market data: {e}")
+
+            try:
+                live_etf = market_data_collector.collect_sector_etfs()
+                if live_etf:
+                    today_key = now.strftime("%Y-%m-%d")
+                    day_etf = {}
+                    for sector, etf in live_etf.items():
+                        day_etf[sector] = {
+                            "etf_name": etf.etf_name,
+                            "price": etf.price,
+                            "change": etf.change,
+                            "change_percent": etf.change_percent,
+                            "is_up": etf.is_up,
+                        }
+                    live_sector_history = {today_key: day_etf}
+            except Exception as e:
+                logger.warning(f"Failed to collect live sector ETF data: {e}")
+
+            # AI 정성적 분석
+            review_data = weekly_summarizer.generate_weekly_review(
+                news_items=all_news[:25],
+                report_items=reports[:10],
+                market_index_history=live_market_history or None,
+                sector_etf_history=live_sector_history or None,
+            )
+
+            # 폴백용 weekly_summary_data 계산
+            live_weekly_summary = {}
+            if live_market_history:
+                for key in ["kospi", "kosdaq", "usd_krw", "jpy_krw", "eur_krw", "wti", "gold"]:
+                    for day_data in live_market_history.values():
+                        data = day_data.get(key)
+                        if data:
+                            live_weekly_summary[key] = {
+                                "start": data["value"],
+                                "end": data["value"],
+                                "change": 0,
+                                "change_pct": 0,
+                            }
+
+            embeds = create_weekly_review_embed(
+                date=now,
+                review_data=review_data,
+                archived_items=[],
+                weekly_summary_data=live_weekly_summary,
+                market_index_history=live_market_history,
+                sector_etf_history=live_sector_history,
+            )
 
     elif schedule_type == "sunday":
+        # 일요일 중복 전송 방지
+        today_key = now.strftime("%Y-%m-%d")
+        preview_cache_id = f"weekly_sunday_{today_key}"
+        if cache.is_sent(preview_cache_id, "weekend"):
+            logger.info(f"Sunday weekly preview already sent today ({today_key}). Skipping.")
+            return True
+
         # 일요일: 주간 전망
         logger.info("Generating weekly preview...")
         preview_data = weekly_preview.generate_weekly_preview(
             recent_news=all_news[:20],
             recent_reports=reports[:10],
         )
+        # 출처 링크용 뉴스/리포트 URL 정보 첨부
+        if preview_data:
+            preview_data["_source_items"] = [
+                {"title": n.title, "url": n.url, "source": n.source or ""}
+                for n in (list(all_news[:20]) + list(reports[:10]))
+            ]
         embeds = create_weekly_preview_embed(now, preview_data)
 
     if not embeds:
@@ -482,6 +627,9 @@ def send_weekend_to_discord(analyzed: dict, schedule_type: str) -> bool:
 
     if success:
         logger.info(f"Successfully sent {len(embeds)} weekend embeds to Discord")
+        # 중복 전송 방지를 위해 캐시에 기록
+        today_key = now.strftime("%Y-%m-%d")
+        cache.mark_as_sent(f"weekly_{schedule_type}_{today_key}", "weekend")
     else:
         logger.error("Failed to send weekend content to Discord")
 
@@ -574,29 +722,18 @@ def send_to_discord(analyzed: dict) -> bool:
         except Exception as e:
             logger.warning(f"Failed to collect market data: {e}")
 
-        # AI 장 마감 리뷰 생성
+        # AI 장 마감 리뷰 생성 (정성적 분석만 - 수치는 market_close_embed에서 직접 표시)
         if all_news:
             try:
-                # 시장 데이터를 dict로 변환
-                market_dict = None
-                if market_data:
-                    market_dict = {
-                        "kospi": {"value": market_data.kospi.value, "change": market_data.kospi.change, "change_percent": market_data.kospi.change_percent} if market_data.kospi else None,
-                        "kosdaq": {"value": market_data.kosdaq.value, "change": market_data.kosdaq.change, "change_percent": market_data.kosdaq.change_percent} if market_data.kosdaq else None,
-                        "usd_krw": {"value": market_data.usd_krw.value} if market_data.usd_krw else None,
-                    }
-
                 closing_briefing = market_briefing_generator.generate_closing_review(
                     news_items=all_news[:10],
                     report_items=reports[:5] if reports else None,
-                    market_data=market_dict,
                 )
                 if closing_briefing:
-                    # 브리핑 검증
+                    # 브리핑 검증 (키워드/출처만 - 수치 검증 불필요)
                     briefing_text = briefing_validator.get_briefing_text(closing_briefing)
                     validation = briefing_validator.validate_briefing(
                         briefing_text=briefing_text,
-                        market_data=market_dict,
                         news_items=all_news[:10],
                         report_items=reports[:5] if reports else None,
                     )
@@ -743,6 +880,27 @@ def send_to_discord(analyzed: dict) -> bool:
         if morning_briefs:
             cache.mark_multiple_as_sent([b.id for b in morning_briefs], "morning_brief")
         logger.info(f"Successfully sent {len(embeds)} embeds to Discord")
+
+        # 주간 아카이브에 저장 (평일만, 중요도 0.3 이상)
+        if schedule_type not in ("saturday", "sunday"):
+            archive_candidates = [
+                item for item in (list(all_news) + list(reports))
+                if item.importance_score >= 0.3
+            ]
+            if archive_candidates:
+                added = weekly_archive.add_items(archive_candidates)
+                logger.info(f"Archived {added} items for weekly review")
+
+            # 섹터 ETF 시세도 아카이브에 저장
+            sector_etf_data = analyzed.get("sector_etf_data", {})
+            if sector_etf_data:
+                weekly_archive.add_sector_etf_data(sector_etf_data)
+
+            # 시장 지수(코스피/코스닥/환율)도 아카이브에 저장
+            market_data = analyzed.get("market_data")
+            if market_data:
+                weekly_archive.add_market_index_data(market_data)
+
     else:
         logger.error("Failed to send to Discord")
 

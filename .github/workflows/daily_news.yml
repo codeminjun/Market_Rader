@@ -1,13 +1,17 @@
 name: Daily Stock News
 
 on:
+  # 평일 스케줄 (월~금)
   # 오전 7시 (KST) = 22:00 UTC (전날) - 전일 마감 후 뉴스 (전일 17:00 ~ 당일 07:00)
   # 오후 12시 (KST) = 03:00 UTC - 오전장 뉴스 (07:00 ~ 12:00)
   # 오후 5시 (KST) = 08:00 UTC - 장마감 뉴스 (12:00 ~ 17:00)
+  # 주말 스케줄 (토/일 오후 1시 KST = 04:00 UTC, 각 1회)
   schedule:
-    - cron: '0 22 * * *'  # 오전 7시 KST
-    - cron: '0 3 * * *'   # 오후 12시 KST
-    - cron: '0 8 * * *'   # 오후 5시 KST
+    - cron: '0 22 * * 0-4'  # 오전 7시 KST (월~금)
+    - cron: '0 3 * * 1-5'   # 오후 12시 KST (월~금)
+    - cron: '0 8 * * 1-5'   # 오후 5시 KST (월~금)
+    - cron: '0 4 * * 6'     # 오후 1시 KST (토요일, 주간 리뷰)
+    - cron: '0 4 * * 0'     # 오후 1시 KST (일요일, 주간 전망)
 
   # 수동 실행 가능
   workflow_dispatch:
@@ -39,7 +43,7 @@ jobs:
       - name: Run Market Rader
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           NEWSAPI_KEY: ${{ secrets.NEWSAPI_KEY }}
           NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
           NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}

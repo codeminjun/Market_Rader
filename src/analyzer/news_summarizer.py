@@ -5,7 +5,7 @@ AI를 사용한 뉴스 요약 및 투자 인사이트 생성
 from typing import Optional
 
 from src.collectors.base import ContentItem
-from src.analyzer.groq_client import groq_client
+from src.analyzer.gemini_client import gemini_client
 from src.utils.logger import logger
 
 
@@ -17,7 +17,7 @@ class NewsSummarizer:
 응답은 항상 한국어로 작성합니다."""
 
     def __init__(self):
-        self.client = groq_client
+        self.client = gemini_client
 
     def summarize_news_batch(
         self,
@@ -125,7 +125,7 @@ class ReportSummarizer:
 응답은 항상 한국어로 작성합니다."""
 
     def __init__(self):
-        self.client = groq_client
+        self.client = gemini_client
 
     def summarize_reports(
         self,
