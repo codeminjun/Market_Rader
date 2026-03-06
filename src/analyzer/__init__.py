@@ -19,6 +19,7 @@ from src.analyzer.market_briefing import (
     market_briefing_generator,
     MarketBriefing,
 )
+from src.analyzer.news_sentiment import classify_sentiment
 
 __all__ = [
     # Groq Client
@@ -49,4 +50,6 @@ __all__ = [
     "MarketBriefingGenerator",
     "market_briefing_generator",
     "MarketBriefing",
+    # News Sentiment
+    "classify_sentiment",
 ]

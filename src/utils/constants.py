@@ -74,6 +74,11 @@ class NewsSettings:
     AFTERNOON_MAX_KOREAN_NEWS = 10
     AFTERNOON_MAX_INTL_NEWS = 0  # 해외 뉴스 제외
 
+    # 오전 7시 감성 분류 (개편)
+    MAX_POSITIVE_NEWS = 5    # 긍정 뉴스
+    MAX_NEGATIVE_NEWS = 5    # 부정 뉴스
+    MAX_INTL_NEWS_FOR_AI = 6 # AI 전략에 입력할 해외 뉴스 수
+
     # 리포트/유튜브
     MAX_REPORTS = 10
     MAX_YOUTUBE_KOREAN = 5
