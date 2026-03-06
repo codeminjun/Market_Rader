@@ -41,7 +41,45 @@ news:
       type: "rss"
       url: "https://www.mk.co.kr/rss/30100041/"
       enabled: true
-      priority: "low"  # 상대적으로 낮은 우선순위
+      priority: "low"
+
+    # ── 경제/증시 전문 소스 추가 ──
+
+    - name: "서울경제 증권"
+      type: "rss"
+      url: "https://www.sedaily.com/rss/finance"
+      enabled: true
+      priority: "high"  # 증권 전문
+
+    - name: "이데일리 증시"
+      type: "rss"
+      url: "http://rss.edaily.co.kr/stock_news.xml"
+      enabled: true
+      priority: "high"  # 증시 전문
+
+    - name: "이데일리 경제"
+      type: "rss"
+      url: "http://rss.edaily.co.kr/economy_news.xml"
+      enabled: true
+      priority: "medium"
+
+    - name: "파이낸셜뉴스 증시"
+      type: "rss"
+      url: "https://www.fnnews.com/rss/r20/fn_realnews_stock.xml"
+      enabled: true
+      priority: "high"  # 증시 전문
+
+    - name: "아시아경제 증시"
+      type: "rss"
+      url: "https://www.asiae.co.kr/rss/stock.htm"
+      enabled: true
+      priority: "medium"
+
+    - name: "헤럴드경제 증권"
+      type: "rss"
+      url: "https://biz.heraldcorp.com/rss/google/finance"
+      enabled: true
+      priority: "medium"
 
   international:
     # Reuters RSS
