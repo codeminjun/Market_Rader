@@ -101,6 +101,12 @@ class MarketSignalAnalyzer:
                 "overall_signal": "bullish/bearish/neutral",
                 "signal_strength": 0.0-1.0,
                 "market_sentiment": "시장 분위기 요약",
+                "swot": {
+                    "strengths": ["강점 1", ...],
+                    "weaknesses": ["약점 1", ...],
+                    "opportunities": ["기회 1", ...],
+                    "threats": ["위협 1", ...]
+                },
                 "sector_signals": {"반도체": "bullish", ...},
                 "key_events": ["핵심 이벤트 1", ...],
                 "risk_factors": ["리스크 요인 1", ...],
@@ -143,6 +149,12 @@ class MarketSignalAnalyzer:
     "overall_signal": "strong_bullish/bullish/neutral/bearish/strong_bearish 중 하나",
     "signal_strength": 0.0에서 1.0 사이 (확신도),
     "market_sentiment": "전반적인 시장 분위기 요약 (1-2문장)",
+    "swot": {{
+        "strengths": ["시장 강점 1-2개 (출처 포함). 예: HBM 수요 견조 (한경)"],
+        "weaknesses": ["시장 약점 1-2개. 예: 원화 약세 지속"],
+        "opportunities": ["투자 기회 1-2개. 예: 미국 AI 인프라 투자 확대"],
+        "threats": ["위협 요인 1-2개. 예: 미중 관세 갈등 재점화"]
+    }},
     "sector_signals": {{
         "섹터명": "bullish/neutral/bearish"
     }},

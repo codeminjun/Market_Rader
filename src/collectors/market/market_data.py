@@ -31,6 +31,16 @@ class ExchangeRate:
 
 
 @dataclass
+class NightFuturesData:
+    """야간 선물 마감 데이터"""
+    name: str               # 선물명 (KOSPI 200, KOSDAQ 150)
+    price: float            # 현재가(마감가)
+    change: float           # 변동폭
+    change_percent: float   # 변동률 (%)
+    is_up: bool             # 상승 여부
+
+
+@dataclass
 class SectorETFData:
     """섹터 ETF 시세 데이터"""
     sector: str             # 섹터명 (반도체, 2차전지 등)
@@ -359,6 +369,62 @@ class MarketDataCollector:
         except Exception as e:
             logger.debug(f"Failed to parse commodity item: {e}")
             return None
+
+    def collect_night_futures(self) -> list[NightFuturesData]:
+        """
+        야간 선물 마감 데이터 수집 (Naver Finance Polling API)
+
+        야간 선물 거래 시간: 18:00 ~ 05:00 (익일) KST
+        오전 7시 리포트 시점에는 이미 마감된 상태.
+
+        Returns:
+            [NightFuturesData, ...] (KOSPI 200, KOSDAQ 150 순)
+            실패 시 빈 리스트 반환
+        """
+        futures_map = {
+            "101S0000": "KOSPI 200",
+            "106S0000": "KOSDAQ 150",
+        }
+        codes = ",".join(futures_map.keys())
+        url = f"https://polling.finance.naver.com/api/realtime?query=SERVICE_ITEM:{codes}"
+
+        try:
+            response = self._session.get(url, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+
+            result = []
+            items = data.get("result", {}).get("areas", [])
+            for area in items:
+                for item in area.get("datas", []):
+                    code = item.get("cd", "")
+                    if code not in futures_map:
+                        continue
+
+                    name = futures_map[code]
+                    price = float(item.get("nv", 0))
+                    change = float(item.get("cv", 0))
+                    change_percent = float(item.get("cr", 0))
+                    is_up = change >= 0
+
+                    result.append(NightFuturesData(
+                        name=name,
+                        price=price,
+                        change=change,
+                        change_percent=change_percent,
+                        is_up=is_up,
+                    ))
+
+            if result:
+                logger.info(f"Collected {len(result)} night futures data")
+            else:
+                logger.warning("Night futures: Polling API returned empty data")
+
+            return result
+
+        except Exception as e:
+            logger.warning(f"Night futures collection failed: {e}")
+            return []
 
     def collect_sector_etfs(self) -> dict[str, SectorETFData]:
         """
