@@ -41,6 +41,9 @@ from src.analyzer import (
 )
 from src.analyzer.briefing_validator import briefing_validator
 
+# Sentiment Classifier
+from src.analyzer.news_sentiment import classify_sentiment
+
 # Discord
 from src.discord import (
     discord_sender,
@@ -56,6 +59,7 @@ from src.discord import (
     create_market_close_embed,
     create_closing_review_embed,
     create_morning_strategy_embed,
+    create_sentiment_news_embeds,
 )
 from src.discord.embeds.report_embed import create_reports_with_analysis_embeds
 
@@ -261,8 +265,10 @@ def analyze_content(
     reports: list[ContentItem],
     videos: dict,
     morning_briefs: list[ContentItem] = None,
+    schedule_type: str = "morning",
 ) -> dict:
     """콘텐츠 분석 및 요약"""
+    is_dry_run = globals().get("_DRY_RUN", False)
     logger.info("=== Analyzing Content ===")
 
     korean_news = news.get("korean", [])
@@ -285,17 +291,22 @@ def analyze_content(
         "video_summaries": {},
         "morning_briefs": morning_briefs,
         "morning_brief_summary": None,
+        "positive_news": [],
+        "negative_news": [],
     }
 
     # 0. Morning Brief 요약 (있는 경우)
     if morning_briefs:
-        try:
-            result["morning_brief_summary"] = morning_brief_summarizer.summarize_multiple_briefs(
-                morning_briefs
-            )
-            logger.info(f"Morning Brief summary generated from {len(morning_briefs)} briefs")
-        except Exception as e:
-            logger.warning(f"Morning Brief summarization failed: {e}")
+        if is_dry_run:
+            logger.info(f"[DRY-RUN] Morning Brief 요약 스킵 ({len(morning_briefs)} briefs)")
+        else:
+            try:
+                result["morning_brief_summary"] = morning_brief_summarizer.summarize_multiple_briefs(
+                    morning_briefs
+                )
+                logger.info(f"Morning Brief summary generated from {len(morning_briefs)} briefs")
+            except Exception as e:
+                logger.warning(f"Morning Brief summarization failed: {e}")
 
     # 1. 국내 뉴스 중요도 평가
     if korean_news:
@@ -310,10 +321,13 @@ def analyze_content(
     # 3. AI 요약 (국내 + 해외 합쳐서)
     all_news = result["korean_news"] + result["international_news"]
     if all_news:
-        try:
-            result["news_summary"] = news_summarizer.summarize_news_batch(all_news[:15])
-        except Exception as e:
-            logger.warning(f"News summarization failed: {e}")
+        if not is_dry_run:
+            try:
+                result["news_summary"] = news_summarizer.summarize_news_batch(all_news[:15])
+            except Exception as e:
+                logger.warning(f"News summarization failed: {e}")
+        else:
+            logger.info("[DRY-RUN] 뉴스 AI 요약 스킵")
 
         # 3-1. 섹터 ETF 시세 수집
         sector_etf_data = {}
@@ -325,7 +339,16 @@ def analyze_content(
         except Exception as e:
             logger.warning(f"Sector ETF collection failed: {e}")
 
-        # 3-1-1. 시장 지수 수집 (코스피/코스닥/환율 - 주간 아카이브용)
+        # 3-1-1. 야간 선물 마감 데이터 수집 (오전 스케줄용)
+        try:
+            night_futures = market_data_collector.collect_night_futures()
+            if night_futures:
+                result["night_futures"] = night_futures
+                logger.info(f"Collected {len(night_futures)} night futures data")
+        except Exception as e:
+            logger.warning(f"Night futures collection failed: {e}")
+
+        # 3-1-2. 시장 지수 수집 (코스피/코스닥/환율 - 주간 아카이브용)
         try:
             market_data = market_data_collector.collect()
             if market_data and (market_data.kospi or market_data.kosdaq):
@@ -335,15 +358,18 @@ def analyze_content(
             logger.warning(f"Market index collection failed: {e}")
 
         # 3-2. 시장 시그널 분석 (AI + ETF 시세)
-        try:
-            result["market_signal"] = market_signal_analyzer.analyze_news_batch(
-                all_news[:15],
-                sector_etf_data=sector_etf_data,
-            )
-            if result["market_signal"]:
-                logger.info(f"Market signal: {result['market_signal'].get('overall_signal')}")
-        except Exception as e:
-            logger.warning(f"Market signal analysis failed: {e}")
+        if not is_dry_run:
+            try:
+                result["market_signal"] = market_signal_analyzer.analyze_news_batch(
+                    all_news[:15],
+                    sector_etf_data=sector_etf_data,
+                )
+                if result["market_signal"]:
+                    logger.info(f"Market signal: {result['market_signal'].get('overall_signal')}")
+            except Exception as e:
+                logger.warning(f"Market signal analysis failed: {e}")
+        else:
+            logger.info("[DRY-RUN] 시장 시그널 AI 분석 스킵")
 
         # 3-3. 긴급 뉴스 감지
         try:
@@ -357,6 +383,22 @@ def analyze_content(
         except Exception as e:
             logger.warning(f"Sector categorization failed: {e}")
 
+        # 3-5. 뉴스 감성 분류 (오전 스케줄용)
+        if schedule_type == "morning" and result["korean_news"]:
+            try:
+                from src.utils.constants import NewsSettings
+                positive, negative = classify_sentiment(
+                    result["korean_news"],
+                    max_positive=NewsSettings.MAX_POSITIVE_NEWS,
+                    max_negative=NewsSettings.MAX_NEGATIVE_NEWS,
+                    use_ai=not is_dry_run,
+                )
+                result["positive_news"] = positive
+                result["negative_news"] = negative
+                logger.info(f"Sentiment: {len(positive)} positive, {len(negative)} negative")
+            except Exception as e:
+                logger.warning(f"Sentiment classification failed: {e}")
+
     # 4. 리포트 중요도 평가 - 중요도 높은 순
     if reports:
         scored_reports = importance_scorer.score_batch(reports)
@@ -365,25 +407,28 @@ def analyze_content(
         logger.info(f"Reports top scores: {[f'{r.title[:20]}({r.importance_score})' for r in result['reports'][:5]]}")
 
         # AI 요약
-        try:
-            result["reports_summary"] = report_summarizer.summarize_reports(
-                result["reports"][:10]
-            )
-        except Exception as e:
-            logger.warning(f"Report summarization failed: {e}")
-
-        # 4-1. 개별 리포트 AI 분석 (PDF 추출된 것만)
-        pdf_reports = [r for r in result["reports"] if r.extra_data.get("pdf_text")]
-        if pdf_reports:
+        if not is_dry_run:
             try:
-                report_analyzer.analyze_batch(pdf_reports, max_items=5)
-                analyzed_count = sum(1 for r in pdf_reports if r.extra_data.get("ai_analysis"))
-                logger.info(f"Analyzed {analyzed_count} reports with AI")
+                result["reports_summary"] = report_summarizer.summarize_reports(
+                    result["reports"][:10]
+                )
             except Exception as e:
-                logger.warning(f"Report analysis failed: {e}")
+                logger.warning(f"Report summarization failed: {e}")
 
-    # 5. 유튜브 중요도 평가 및 요약 (한국) - 중요도 높은 순
-    if korean_videos:
+            # 4-1. 개별 리포트 AI 분석 (PDF 추출된 것만)
+            pdf_reports = [r for r in result["reports"] if r.extra_data.get("pdf_text")]
+            if pdf_reports:
+                try:
+                    report_analyzer.analyze_batch(pdf_reports, max_items=5)
+                    analyzed_count = sum(1 for r in pdf_reports if r.extra_data.get("ai_analysis"))
+                    logger.info(f"Analyzed {analyzed_count} reports with AI")
+                except Exception as e:
+                    logger.warning(f"Report analysis failed: {e}")
+        else:
+            logger.info("[DRY-RUN] 리포트 AI 분석 스킵")
+
+    # 5. 유튜브 중요도 평가 및 요약 (한국) - 중요도 높은 순 (오전 스케줄 제외)
+    if korean_videos and schedule_type != "morning":
         scored = importance_scorer.score_batch(korean_videos)
         scored.sort(key=lambda x: x.importance_score, reverse=True)
         result["korean_videos"] = scored[:5]  # 한국 5개
@@ -397,8 +442,8 @@ def analyze_content(
             except Exception as e:
                 logger.warning(f"Video summarization failed for {video.title[:30]}: {e}")
 
-    # 6. 유튜브 중요도 평가 및 요약 (해외) - 중요도 높은 순
-    if intl_videos:
+    # 6. 유튜브 중요도 평가 및 요약 (해외) - 중요도 높은 순 (오전 스케줄 제외)
+    if intl_videos and schedule_type != "morning":
         scored = importance_scorer.score_batch(intl_videos)
         scored.sort(key=lambda x: x.importance_score, reverse=True)
         result["international_videos"] = scored[:5]  # 해외 5개
@@ -636,9 +681,65 @@ def send_weekend_to_discord(analyzed: dict, schedule_type: str) -> bool:
     return success
 
 
+def print_embeds_to_terminal(embeds: list) -> None:
+    """Embed 내용을 터미널에 예쁘게 출력"""
+    COLORS = {
+        0x2ECC71: "🟢", 0xE74C3C: "🔴", 0x3498DB: "🔵",
+        0xF39C12: "🟡", 0x9B59B6: "🟣", 0x1ABC9C: "🟢",
+        0xE67E22: "🟠", 0x95A5A6: "⚪",
+    }
+
+    print("\n" + "=" * 70)
+    print(f"  📨 Discord Embed Preview ({len(embeds)}개)")
+    print("=" * 70)
+
+    for i, embed in enumerate(embeds, 1):
+        color_hex = getattr(embed, 'color', None)
+        color_emoji = COLORS.get(color_hex, "🔷") if color_hex else "🔷"
+
+        print(f"\n{'─' * 60}")
+        print(f"  {color_emoji} Embed #{i}")
+        print(f"{'─' * 60}")
+
+        # Title
+        title = getattr(embed, 'title', None)
+        if title:
+            print(f"  📌 {title}")
+
+        # Description
+        desc = getattr(embed, 'description', None)
+        if desc:
+            # 줄바꿈 보존하면서 출력
+            for line in desc.split('\n'):
+                print(f"  │ {line}")
+
+        # Fields
+        fields = getattr(embed, 'fields', None)
+        if fields:
+            for field in fields:
+                fname = field.get('name', '')
+                fvalue = field.get('value', '')
+                inline = field.get('inline', False)
+                print(f"  ┌─ {fname} {'(inline)' if inline else ''}")
+                for line in fvalue.split('\n'):
+                    print(f"  │  {line}")
+
+        # Footer
+        footer = getattr(embed, 'footer', None)
+        if footer:
+            footer_text = footer.get('text', '') if isinstance(footer, dict) else getattr(footer, 'text', '')
+            if footer_text:
+                print(f"  └─ 📝 {footer_text}")
+
+    print(f"\n{'=' * 70}")
+    print(f"  ✅ 총 {len(embeds)}개 Embed 미리보기 완료")
+    print(f"{'=' * 70}\n")
+
+
 def send_to_discord(analyzed: dict) -> bool:
     """Discord로 전송"""
     from src.utils.constants import NewsSettings, EmbedColors
+    is_dry_run = globals().get("_DRY_RUN", False)
 
     logger.info("=== Sending to Discord ===")
 
@@ -670,30 +771,32 @@ def send_to_discord(analyzed: dict) -> bool:
 
     all_news = korean_news + intl_news
 
-    # 0. Morning Brief (오전 스케줄에서만)
+    # 0. Morning Brief (오전 스케줄) - 별도 Embed 없음, AI 전략에 입력으로만 사용
     morning_briefs = analyzed.get("morning_briefs", [])
-    if schedule_type == "morning" and morning_briefs:
-        # Morning Brief 종합 요약 생성
-        combined_summary = analyzed.get("morning_brief_summary")
-        brief_embeds = create_morning_brief_embed(morning_briefs, combined_summary)
-        embeds.extend(brief_embeds)
-        logger.info(f"Added {len(brief_embeds)} Morning Brief embeds")
-
-    # 0-1. AI 아침 전략 브리핑 (오전 스케줄에서만)
     reports = analyzed.get("reports", [])
-    if schedule_type == "morning" and all_news:
+
+    # 0-0. 긴급 뉴스 (있는 경우 최상단)
+    breaking_news = analyzed.get("breaking_news", [])
+    if breaking_news:
+        breaking_embed = create_breaking_news_embed(breaking_news)
+        if breaking_embed:
+            embeds.append(breaking_embed)
+            logger.info(f"Added breaking news embed ({len(breaking_news)} items)")
+
+    # 0-1. AI 아침 전략 브리핑 (오전 스케줄에서만 - Morning Brief + 해외뉴스 흡수)
+    if schedule_type == "morning" and all_news and not is_dry_run:
         try:
             morning_briefing = market_briefing_generator.generate_morning_strategy(
-                news_items=all_news[:10],
+                news_items=korean_news[:10],
                 morning_briefs=morning_briefs,
                 report_items=reports[:5],
+                intl_news_items=intl_news[:NewsSettings.MAX_INTL_NEWS_FOR_AI] if intl_news else None,
             )
             if morning_briefing:
                 # 브리핑 검증
                 briefing_text = briefing_validator.get_briefing_text(morning_briefing)
                 validation = briefing_validator.validate_briefing(
                     briefing_text=briefing_text,
-                    market_data=None,  # 아침엔 시장 데이터 없음
                     news_items=all_news[:10],
                     report_items=reports[:5],
                 )
@@ -723,7 +826,7 @@ def send_to_discord(analyzed: dict) -> bool:
             logger.warning(f"Failed to collect market data: {e}")
 
         # AI 장 마감 리뷰 생성 (정성적 분석만 - 수치는 market_close_embed에서 직접 표시)
-        if all_news:
+        if all_news and not is_dry_run:
             try:
                 closing_briefing = market_briefing_generator.generate_closing_review(
                     news_items=all_news[:10],
@@ -749,19 +852,13 @@ def send_to_discord(analyzed: dict) -> bool:
             except Exception as e:
                 logger.warning(f"Failed to generate closing review: {e}")
 
-    # 0-3. 긴급 뉴스 (있는 경우 최상단)
-    breaking_news = analyzed.get("breaking_news", [])
-    if breaking_news:
-        breaking_embed = create_breaking_news_embed(breaking_news)
-        if breaking_embed:
-            embeds.append(breaking_embed)
-            logger.info(f"Added breaking news embed ({len(breaking_news)} items)")
-
     # 1. 시장 시그널 헤더 (AI 분석 결과가 있으면) 또는 일반 헤더
     market_signal = analyzed.get("market_signal")
     if all_news:
         if market_signal:
-            # 시장 시그널 Embed 사용
+            # 야간 선물 데이터를 signal_data에 포함
+            if analyzed.get("night_futures"):
+                market_signal["night_futures"] = analyzed["night_futures"]
             signal_embed = create_market_signal_embed(
                 date=now,
                 signal_data=market_signal,
@@ -779,25 +876,34 @@ def send_to_discord(analyzed: dict) -> bool:
             )
             embeds.append(header_embed)
 
-    # 2. 국내 뉴스
-    if korean_news:
-        korean_embeds = create_news_list_embeds(
-            items=korean_news,
-            title=f"🇰🇷 국내 뉴스 ({len(korean_news)}건)",
-            items_per_embed=5,
-            color=EmbedColors.NEWS_KOREAN,
-        )
-        embeds.extend(korean_embeds)
+    # 2~3. 뉴스 표시 (오전: 긍정/부정 감성 분류, 그 외: 기존 방식)
+    if schedule_type == "morning":
+        # 오전: 긍정/부정 뉴스 Embed
+        positive_news = analyzed.get("positive_news", [])
+        negative_news = analyzed.get("negative_news", [])
+        sentiment_embeds = create_sentiment_news_embeds(positive_news, negative_news)
+        embeds.extend(sentiment_embeds)
+        if sentiment_embeds:
+            logger.info(f"Added {len(sentiment_embeds)} sentiment news embeds")
+    else:
+        # 점심/오후/수동: 기존 방식
+        if korean_news:
+            korean_embeds = create_news_list_embeds(
+                items=korean_news,
+                title=f"🇰🇷 국내 뉴스 ({len(korean_news)}건)",
+                items_per_embed=5,
+                color=EmbedColors.NEWS_KOREAN,
+            )
+            embeds.extend(korean_embeds)
 
-    # 3. 해외 뉴스 (간략 스케줄에서는 건너뜀)
-    if intl_news and not is_brief_schedule:
-        intl_embeds = create_news_list_embeds(
-            items=intl_news,
-            title=f"🇺🇸 해외 뉴스 ({len(intl_news)}건)",
-            items_per_embed=5,
-            color=EmbedColors.NEWS_INTL,
-        )
-        embeds.extend(intl_embeds)
+        if intl_news and not is_brief_schedule:
+            intl_embeds = create_news_list_embeds(
+                items=intl_news,
+                title=f"🇺🇸 해외 뉴스 ({len(intl_news)}건)",
+                items_per_embed=5,
+                color=EmbedColors.NEWS_INTL,
+            )
+            embeds.extend(intl_embeds)
 
     # 간략 스케줄(점심/오후)에서는 리포트와 유튜브 제외
     reports = []
@@ -809,20 +915,17 @@ def send_to_discord(analyzed: dict) -> bool:
         # 4. 리포트 (AI 분석 포함 시 상세 Embed 사용)
         reports = analyzed.get("reports", [])[:NewsSettings.MAX_REPORTS]
         if reports:
-            # AI 분석된 리포트가 있는지 확인
             analyzed_reports = [r for r in reports if r.extra_data.get("ai_analysis")]
 
             if analyzed_reports:
-                # AI 분석 포함 상세 Embed 사용
                 report_embeds = create_reports_with_analysis_embeds(
                     items=reports,
-                    max_detailed=3,  # 상세 분석 3개
-                    max_list=7,  # 나머지 목록 7개
+                    max_detailed=3,
+                    max_list=7,
                 )
                 embeds.extend(report_embeds)
                 logger.info(f"Added {len(report_embeds)} report embeds (with {len(analyzed_reports)} analyzed)")
             else:
-                # 기존 방식 (AI 분석 없을 때)
                 reports_header = create_reports_header_embed(
                     report_count=len(reports),
                     summary=analyzed.get("reports_summary"),
@@ -835,36 +938,40 @@ def send_to_discord(analyzed: dict) -> bool:
                 )
                 embeds.append(reports_list)
 
-        # 5. 한국 유튜브
-        korean_videos = analyzed.get("korean_videos", [])[:NewsSettings.MAX_YOUTUBE_KOREAN]
-        video_summaries = analyzed.get("video_summaries", {})
+        # 5~6. 유튜브 (오전 스케줄 제외)
+        if schedule_type != "morning":
+            korean_videos = analyzed.get("korean_videos", [])[:NewsSettings.MAX_YOUTUBE_KOREAN]
+            video_summaries = analyzed.get("video_summaries", {})
 
-        if korean_videos:
-            korean_yt_list = create_youtube_list_embed(
-                items=korean_videos,
-                title=f"🇰🇷 한국 유튜브 ({len(korean_videos)}건)",
-                max_items=5,
-                video_summaries=video_summaries,
-            )
-            embeds.append(korean_yt_list)
+            if korean_videos:
+                korean_yt_list = create_youtube_list_embed(
+                    items=korean_videos,
+                    title=f"🇰🇷 한국 유튜브 ({len(korean_videos)}건)",
+                    max_items=5,
+                    video_summaries=video_summaries,
+                )
+                embeds.append(korean_yt_list)
 
-        # 6. 해외 유튜브
-        intl_videos = analyzed.get("international_videos", [])[:NewsSettings.MAX_YOUTUBE_INTL]
+            intl_videos = analyzed.get("international_videos", [])[:NewsSettings.MAX_YOUTUBE_INTL]
 
-        if intl_videos:
-            intl_yt_list = create_youtube_list_embed(
-                items=intl_videos,
-                title=f"🇺🇸 해외 유튜브 ({len(intl_videos)}건)",
-                max_items=5,
-                video_summaries=video_summaries,
-            )
-            embeds.append(intl_yt_list)
+            if intl_videos:
+                intl_yt_list = create_youtube_list_embed(
+                    items=intl_videos,
+                    title=f"🇺🇸 해외 유튜브 ({len(intl_videos)}건)",
+                    max_items=5,
+                    video_summaries=video_summaries,
+                )
+                embeds.append(intl_yt_list)
 
     all_videos = korean_videos + intl_videos
 
-    # Discord로 전송
+    # Discord로 전송 (또는 dry-run 시 터미널 출력)
     if not embeds:
         logger.info("No content to send")
+        return True
+
+    if is_dry_run:
+        print_embeds_to_terminal(embeds)
         return True
 
     success = discord_sender.send_multiple_embeds(
@@ -957,12 +1064,13 @@ def main():
                 executor.submit(collect_news): "news",
                 # 오전 스케줄에서만 PDF 추출 (AI 분석용)
                 executor.submit(collect_reports, extract_pdf=is_morning): "reports",
-                executor.submit(collect_youtube): "youtube",
             }
 
-            # 오전 스케줄에만 Morning Brief 수집
+            # 오전 스케줄: 유튜브 제외, Morning Brief 수집
             if is_morning:
                 futures[executor.submit(collect_morning_briefs)] = "morning_briefs"
+            else:
+                futures[executor.submit(collect_youtube)] = "youtube"
 
             for future in as_completed(futures):
                 task_name = futures[future]
@@ -987,7 +1095,7 @@ def main():
             return
 
         # 2. 분석 및 요약
-        analyzed = analyze_content(news, reports, videos, morning_briefs)
+        analyzed = analyze_content(news, reports, videos, morning_briefs, schedule_type=schedule_type)
 
         # 3. Discord 전송
         success = send_to_discord(analyzed)
@@ -1006,4 +1114,41 @@ def main():
 
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Market Rader Bot")
+    parser.add_argument("--test", action="store_true", help="테스트 서버로 전송")
+    parser.add_argument("--schedule", type=str, default=None,
+                        choices=["morning", "noon", "afternoon"],
+                        help="스케줄 타입 강제 지정")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="터미널에 Embed 내용 출력 (Discord 전송 안 함, AI 호출 안 함)")
+    args = parser.parse_args()
+
+    if args.test:
+        from config.settings import settings
+        if settings.DISCORD_WEBHOOK_URL_TEST:
+            settings.DISCORD_WEBHOOK_URL = settings.DISCORD_WEBHOOK_URL_TEST
+            discord_sender.webhook_url = settings.DISCORD_WEBHOOK_URL_TEST
+            logger.info("🧪 TEST MODE: 테스트 서버로 전송합니다")
+        else:
+            logger.error("DISCORD_WEBHOOK_URL_TEST가 .env에 설정되지 않았습니다")
+            sys.exit(1)
+
+    if args.schedule:
+        # 현재 모듈의 전역 네임스페이스에서 직접 교체
+        from src.utils.constants import ScheduleSettings
+        _schedule_titles = {
+            "morning": ScheduleSettings.MORNING_TITLE,
+            "noon": ScheduleSettings.NOON_TITLE,
+            "afternoon": ScheduleSettings.AFTERNOON_TITLE,
+        }
+        _forced = (args.schedule, _schedule_titles[args.schedule])
+        globals()["get_schedule_type"] = lambda: _forced
+        logger.info(f"📋 SCHEDULE OVERRIDE: {args.schedule}")
+
+    if getattr(args, 'dry_run', False):
+        globals()["_DRY_RUN"] = True
+        logger.info("🖨️  DRY-RUN MODE: 터미널 출력만 (Discord 전송 안 함, AI 호출 안 함)")
+
     main()

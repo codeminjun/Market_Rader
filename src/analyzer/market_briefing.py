@@ -145,15 +145,17 @@ class MarketBriefingGenerator:
         news_items: list[ContentItem],
         morning_briefs: list[ContentItem] = None,
         report_items: list[ContentItem] = None,
+        intl_news_items: list[ContentItem] = None,
     ) -> Optional[MarketBriefing]:
         """
         아침 전략 브리핑 생성 (오전 7시용)
-        Morning Brief + 뉴스 + 리포트를 종합 분석
+        Morning Brief + 뉴스 + 리포트 + 해외뉴스를 종합 분석
 
         Args:
-            news_items: 전일/금일 주요 뉴스
+            news_items: 전일/금일 주요 뉴스 (국내)
             morning_briefs: Morning Brief 내용 (OCR 텍스트 포함)
             report_items: 최신 리포트 (AI 분석 포함)
+            intl_news_items: 해외 주요 뉴스 (AI가 한줄 요약으로 정리)
 
         Returns:
             MarketBriefing 객체
@@ -165,8 +167,9 @@ class MarketBriefingGenerator:
         brief_text, brief_sources = self._format_morning_briefs_detailed(morning_briefs[:3]) if morning_briefs else ("", [])
         news_text, news_sources = self._format_news_detailed(news_items[:10]) if news_items else ("", [])
         report_text, report_sources = self._format_reports_detailed(report_items[:5]) if report_items else ("", [])
+        intl_text, intl_sources = self._format_news_detailed(intl_news_items[:6]) if intl_news_items else ("", [])
 
-        all_sources = brief_sources + news_sources + report_sources
+        all_sources = brief_sources + news_sources + intl_sources + report_sources
 
         prompt = f"""아래 제공된 실제 데이터만을 기반으로 오늘의 장 전략 브리핑을 작성해주세요.
 모든 문장은 '해요체'로 친근하게 작성하세요.
@@ -174,8 +177,11 @@ class MarketBriefingGenerator:
 === 증권사 Morning Brief (전문가 분석) ===
 {brief_text if brief_text else "Morning Brief 없음"}
 
-=== 주요 뉴스 (실제 기사) ===
+=== 국내 주요 뉴스 (실제 기사) ===
 {news_text if news_text else "뉴스 없음"}
+
+=== 해외 주요 뉴스 ===
+{intl_text if intl_text else "해외 뉴스 없음"}
 
 === 애널리스트 리포트 분석 결과 ===
 {report_text if report_text else "리포트 없음"}
@@ -183,7 +189,7 @@ class MarketBriefingGenerator:
 위 데이터를 종합 분석하여 다음 JSON 형식으로 응답해주세요:
 {{
     "greeting": "아침 인사 + 오늘 장 전망 (해요체, 1문장). 예: '좋은 아침이에요! 오늘 장은 ~할 것 같아요.'",
-    "summary": "오늘 장 전망 요약 (해요체, 2-3문장). 예: '증권사들이 ~를 주목하고 있어요.'",
+    "summary": "오늘 장 전망 요약 (해요체, 2-3문장). 해외 시장 동향도 한줄로 녹여주세요.",
     "key_points": ["핵심 포인트 3-5개 (해요체, 출처 명시). 예: '반도체 업황이 좋아지고 있어요 (SK증권)'"],
     "action_items": ["오늘 체크할 것 2-3개 (해요체). 예: '~를 눈여겨보면 좋아요'"],
     "closing": "응원 메시지 (해요체, 1문장). 예: '오늘도 좋은 투자 하세요!'",
@@ -194,8 +200,9 @@ class MarketBriefingGenerator:
 1. 해요체 필수: 모든 문장을 '~해요', '~이에요', '~예요' 형태로 끝내세요
 2. 🌟 우선 반영: "사용자 관심 뉴스" 섹션 기사를 반드시 summary와 key_points에 포함하세요
 3. Morning Brief 우선: Morning Brief 내용이 있다면 가장 우선 반영하세요
-4. 출처 필수: 모든 정보에 출처를 괄호로 표시하세요
-5. 금지: 위 데이터에 없는 정보/숫자 사용 금지"""
+4. 해외 뉴스 활용: 해외 주요 뉴스를 전략에 자연스럽게 녹여주세요 (한줄 요약 형태)
+5. 출처 필수: 모든 정보에 출처를 괄호로 표시하세요
+6. 금지: 위 데이터에 없는 정보/숫자 사용 금지"""
 
         try:
             result = self.client.generate_json(

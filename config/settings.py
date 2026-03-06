@@ -21,6 +21,7 @@ class Settings:
 
     # Discord
     DISCORD_WEBHOOK_URL: str = os.getenv("DISCORD_WEBHOOK_URL", "")
+    DISCORD_WEBHOOK_URL_TEST: str = os.getenv("DISCORD_WEBHOOK_URL_TEST", "")
 
     # Gemini API
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
