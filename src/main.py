@@ -480,10 +480,13 @@ def get_schedule_type() -> tuple[str, str]:
     elif weekday == 6:  # 일요일
         return ("sunday", ScheduleSettings.SUNDAY_TITLE)
 
-    # 평일 휴장일 체크
+    # 평일 휴장일 체크 — 오전에만 안내, 점심/오후는 무시
     holiday_info = check_market_holidays(now)
     if holiday_info.is_holiday:
-        return ("holiday", ScheduleSettings.HOLIDAY_TITLE)
+        if ScheduleSettings.MORNING_START_HOUR <= hour <= ScheduleSettings.MORNING_END_HOUR:
+            return ("holiday", ScheduleSettings.HOLIDAY_TITLE)
+        # 점심/오후 시간대는 휴일 안내 보내지 않음 (skip)
+        return ("holiday_skip", "")
 
     # 평일 스케줄
     if ScheduleSettings.MORNING_START_HOUR <= hour <= ScheduleSettings.MORNING_END_HOUR:
@@ -1030,8 +1033,9 @@ def main():
         # 현재 스케줄 타입 확인
         schedule_type, _ = get_schedule_type()
 
-        # 휴장일 처리: 안내 Embed만 전송하고 종료
+        # 휴장일 처리
         if schedule_type == "holiday":
+            # 오전: 안내 Embed 전송하고 종료
             from src.utils.market_holiday import check_market_holidays
             from src.discord.embeds.holiday_embed import create_holiday_embed
 
@@ -1045,9 +1049,14 @@ def main():
                 username="Market Rader 📈",
             )
             if success:
-                logger.info("Holiday notice sent to Discord")
+                logger.info("Holiday notice sent to Discord (오전 1회)")
             else:
                 logger.error("Failed to send holiday notice")
+            return
+
+        if schedule_type == "holiday_skip":
+            # 점심/오후: 조용히 종료 (이미 오전에 안내함)
+            logger.info("Holiday - 오전에 이미 안내 완료. 스킵합니다.")
             return
 
         is_morning = schedule_type == "morning"
