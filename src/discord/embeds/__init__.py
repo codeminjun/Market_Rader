@@ -9,6 +9,7 @@ from src.discord.embeds.news_embed import (
     create_market_signal_embed,
     create_breaking_news_embed,
     create_sector_news_embed,
+    create_sentiment_news_embeds,
     get_importance_emoji,
     get_priority_stars,
 )
@@ -49,6 +50,7 @@ __all__ = [
     "create_market_signal_embed",
     "create_breaking_news_embed",
     "create_sector_news_embed",
+    "create_sentiment_news_embeds",
     "get_importance_emoji",
     "get_priority_stars",
     # Reports

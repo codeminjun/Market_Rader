@@ -11,6 +11,7 @@ from src.discord.embeds import (
     create_market_signal_embed,
     create_breaking_news_embed,
     create_sector_news_embed,
+    create_sentiment_news_embeds,
     create_reports_header_embed,
     create_report_item_embed,
     create_reports_list_embed,
@@ -43,6 +44,7 @@ __all__ = [
     "create_market_signal_embed",
     "create_breaking_news_embed",
     "create_sector_news_embed",
+    "create_sentiment_news_embeds",
     # Report Embeds
     "create_reports_header_embed",
     "create_report_item_embed",

@@ -188,37 +188,64 @@ def create_market_signal_embed(
         inline=False,
     )
 
-    # 시장 분위기
-    if "market_sentiment" in signal_data:
+    # 야간 선물 마감 데이터
+    night_futures = signal_data.get("night_futures", [])
+    if night_futures:
+        futures_lines = []
+        for nf in night_futures:
+            sign = "+" if nf.change_percent >= 0 else ""
+            arrow = "📈" if nf.is_up else "📉"
+            futures_lines.append(
+                f"**{nf.name}**: {nf.price:,.2f} ({sign}{nf.change_percent:.2f}%) {arrow}"
+            )
         embed.add_embed_field(
-            name="🎭 시장 분위기는 이래요",
-            value=signal_data["market_sentiment"][:500],
+            name="🌙 야간 선물 마감",
+            value="\n".join(futures_lines),
             inline=False,
         )
 
-    # 섹터별 시그널
+    # SWOT 분석
+    swot = signal_data.get("swot", {})
+    if swot:
+        swot_lines = []
+        strengths = swot.get("strengths", [])
+        weaknesses = swot.get("weaknesses", [])
+        opportunities = swot.get("opportunities", [])
+        threats = swot.get("threats", [])
+        if strengths:
+            swot_lines.append(f"💪 **강점**: {', '.join(strengths[:2])}")
+        if weaknesses:
+            swot_lines.append(f"😥 **약점**: {', '.join(weaknesses[:2])}")
+        if opportunities:
+            swot_lines.append(f"🌟 **기회**: {', '.join(opportunities[:2])}")
+        if threats:
+            swot_lines.append(f"⚠️ **위협**: {', '.join(threats[:2])}")
+        if swot_lines:
+            embed.add_embed_field(
+                name="📊 SWOT 분석",
+                value="\n".join(swot_lines),
+                inline=False,
+            )
+
+    # 섹터별 시그널 → BCG 매트릭스
     sector_signals = signal_data.get("sector_signals", {})
     sector_etf_data = signal_data.get("sector_etf_data", {})
     if sector_signals:
-        sector_lines = []
-        for sector, sector_signal in list(sector_signals.items())[:6]:
-            sector_emoji = SIGNAL_EMOJIS.get(sector_signal, "➡️")
-            signal_text = SIGNAL_NAMES.get(sector_signal, sector_signal)
+        bcg = _classify_bcg(sector_signals, sector_etf_data)
+        bcg_lines = []
+        if bcg["star"]:
+            bcg_lines.append(f"⭐ **Star**: {', '.join(bcg['star'])}")
+        if bcg["cash_cow"]:
+            bcg_lines.append(f"💰 **Cash Cow**: {', '.join(bcg['cash_cow'])}")
+        if bcg["question_mark"]:
+            bcg_lines.append(f"❓ **Question Mark**: {', '.join(bcg['question_mark'])}")
+        if bcg["dog"]:
+            bcg_lines.append(f"🐕 **Dog**: {', '.join(bcg['dog'])}")
 
-            # ETF 실시간 시세가 있으면 함께 표시
-            etf = sector_etf_data.get(sector)
-            if etf:
-                sign = "+" if etf.change_percent >= 0 else ""
-                sector_lines.append(
-                    f"{sector_emoji} **{sector}**: {signal_text} | {etf.etf_name} {sign}{etf.change_percent:.2f}%"
-                )
-            else:
-                sector_lines.append(f"{sector_emoji} **{sector}**: {signal_text}")
-
-        if sector_lines:
+        if bcg_lines:
             embed.add_embed_field(
-                name="🏭 섹터별로 보면 이래요",
-                value="\n".join(sector_lines),
+                name="🏭 섹터 BCG 분류",
+                value="\n".join(bcg_lines),
                 inline=False,
             )
 
@@ -393,6 +420,102 @@ def create_news_item_embed(
     return embed
 
 
+def _classify_bcg(
+    sector_signals: dict[str, str],
+    sector_etf_data: dict = None,
+) -> dict[str, list[str]]:
+    """
+    섹터별 시그널과 ETF 데이터를 BCG 매트릭스로 분류
+
+    Rules:
+    - Star: signal=bullish/strong_bullish AND etf_change > 0
+    - Cash Cow: signal=neutral AND 대형섹터
+    - Question Mark: signal=bullish BUT 소형섹터 OR etf 혼조
+    - Dog: signal=bearish/strong_bearish AND etf_change < 0
+    """
+    LARGE_SECTORS = {"반도체", "금융", "자동차", "에너지", "2차전지"}
+    sector_etf_data = sector_etf_data or {}
+
+    bcg = {"star": [], "cash_cow": [], "question_mark": [], "dog": []}
+
+    for sector, signal in sector_signals.items():
+        etf = sector_etf_data.get(sector)
+        etf_change = etf.change_percent if etf else 0.0
+        etf_sign = f"({'+' if etf_change >= 0 else ''}{etf_change:.1f}%)" if etf else ""
+        label = f"{sector}{etf_sign}"
+
+        if signal in ("bearish", "strong_bearish") and etf_change < 0:
+            bcg["dog"].append(label)
+        elif signal in ("bullish", "strong_bullish"):
+            if etf_change > 0:
+                bcg["star"].append(label)
+            else:
+                bcg["question_mark"].append(label)
+        elif signal == "neutral" and sector in LARGE_SECTORS:
+            bcg["cash_cow"].append(label)
+        elif signal == "neutral":
+            bcg["question_mark"].append(label)
+        else:
+            bcg["question_mark"].append(label)
+
+    return bcg
+
+
+def create_sentiment_news_embeds(
+    positive_news: list[ContentItem],
+    negative_news: list[ContentItem],
+) -> list[DiscordEmbed]:
+    """
+    긍정 뉴스 + 부정 뉴스 각각 1개 Embed 반환
+
+    Args:
+        positive_news: 긍정 뉴스 리스트 (최대 5건)
+        negative_news: 부정 뉴스 리스트 (최대 5건)
+
+    Returns:
+        DiscordEmbed 리스트 (1~2개)
+    """
+    embeds = []
+
+    if positive_news:
+        pos_embed = DiscordEmbed(
+            title=f"📈 긍정 뉴스 ({len(positive_news)}건)",
+            color="32CD32",  # 라임그린
+        )
+        pos_lines = []
+        for i, item in enumerate(positive_news, 1):
+            item_title = sanitize_title_for_link(item.title)
+            if len(item_title) > 45:
+                item_title = item_title[:42] + "..."
+            source_short = item.source.split("(")[0].strip()[:12]
+            pos_lines.append(
+                f"📈 **{i}.** [{item_title}]({item.url})\n└ `{source_short}`"
+            )
+        pos_embed.description = "\n".join(pos_lines)
+        pos_embed.set_footer(text="Market Rader Bot")
+        embeds.append(pos_embed)
+
+    if negative_news:
+        neg_embed = DiscordEmbed(
+            title=f"📉 부정 뉴스 ({len(negative_news)}건)",
+            color="FFA500",  # 주황
+        )
+        neg_lines = []
+        for i, item in enumerate(negative_news, 1):
+            item_title = sanitize_title_for_link(item.title)
+            if len(item_title) > 45:
+                item_title = item_title[:42] + "..."
+            source_short = item.source.split("(")[0].strip()[:12]
+            neg_lines.append(
+                f"📉 **{i}.** [{item_title}]({item.url})\n└ `{source_short}`"
+            )
+        neg_embed.description = "\n".join(neg_lines)
+        neg_embed.set_footer(text="Market Rader Bot")
+        embeds.append(neg_embed)
+
+    return embeds
+
+
 def create_news_list_embed(
     items: list[ContentItem],
     title: str = "📰 주요 뉴스",
@@ -453,7 +576,7 @@ def create_news_list_embeds(
                 item_title = item_title[:42] + "..."
 
             # 출처 간략화
-            source_short = item.source.split("(")[0].strip()[:8]
+            source_short = item.source.split("(")[0].strip()[:12]
 
             line = f"{emoji} **{i}.** [{item_title}]({item.url}){covered_call_label}\n└ `{source_short}`"
             news_lines.append(line)
