@@ -304,11 +304,28 @@ def create_weekly_review_embed(
     market_index_history = market_index_history or {}
     weekly_summary_data = weekly_summary_data or {}
 
+    # 데이터 일수 판단 → 레이블 동적 변경
+    index_data_days = len(market_index_history)
+    etf_data_days = len(sector_etf_history) if sector_etf_history else 0
+    is_partial = index_data_days < 2
+
+    if is_partial:
+        index_title = "📈 주요 지표 (최근 거래일 기준)"
+        sub_label = "🌐 기타 지표 (최근 거래일 변동)"
+        main_label = "📉 최근 거래일 등락"
+    else:
+        index_title = "📈 주요 지표 (월~금)"
+        sub_label = "🌐 기타 지표 (주간 변동)"
+        main_label = "📉 주간 등락"
+
     if market_index_history or weekly_summary_data:
         index_embed = DiscordEmbed(
-            title="📈 주요 지표 (월~금)",
+            title=index_title,
             color=WeekendEmbedColors.SATURDAY_REVIEW,
         )
+
+        if is_partial:
+            index_embed.set_description("⚠️ 주간 누적 데이터가 부족하여 최근 거래일 변동률을 표시합니다.")
 
         # 코스피/코스닥/USD 일별 테이블
         if market_index_history:
@@ -320,16 +337,16 @@ def create_weekly_review_embed(
                     inline=False,
                 )
 
-        # 보조 지표 (JPY/EUR/WTI/Gold) 주간 변동 요약
+        # 보조 지표 (JPY/EUR/WTI/Gold) 변동 요약
         sub_text = _format_weekly_summary_text(market_index_history, weekly_summary_data)
         if sub_text:
             index_embed.add_embed_field(
-                name="🌐 기타 지표 (주간 변동)",
+                name=sub_label,
                 value=sub_text[:1024],
                 inline=False,
             )
 
-        # 주요 지표 주간 변동률 요약 한 줄
+        # 주요 지표 변동률 요약 한 줄
         main_summary_parts = []
         for name, key in [("코스피", "kospi"), ("코스닥", "kosdaq"), ("USD/KRW", "usd_krw")]:
             data = weekly_summary_data.get(key)
@@ -338,7 +355,7 @@ def create_weekly_review_embed(
                 main_summary_parts.append(f"{name} {sign}{data['change_pct']:.2f}%")
         if main_summary_parts:
             index_embed.add_embed_field(
-                name="📉 주간 등락",
+                name=main_label,
                 value=" ┃ ".join(main_summary_parts),
                 inline=False,
             )
@@ -347,6 +364,9 @@ def create_weekly_review_embed(
 
     # --- Embed 3: 섹터 분석 (ETF 등락률 크롤링 + AI 원인 분석 혼합) ---
     sector_etf_history = sector_etf_history or {}
+    is_etf_partial = etf_data_days < 2
+    etf_field_label = "📈 섹터 ETF 최근 거래일 등락률" if is_etf_partial else "📈 섹터 ETF 주간 등락률"
+
     if sector_etf_history or (review_data and review_data.get("sector_insights")):
         sector_embed = DiscordEmbed(
             title="📊 섹터 분석",
@@ -358,7 +378,7 @@ def create_weekly_review_embed(
             etf_lines = _format_sector_etf_for_embed(sector_etf_history)
             if etf_lines:
                 sector_embed.add_embed_field(
-                    name="📈 섹터 ETF 주간 등락률",
+                    name=etf_field_label,
                     value=etf_lines[:1024],
                     inline=False,
                 )
