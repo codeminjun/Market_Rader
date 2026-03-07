@@ -264,6 +264,7 @@ class WeeklyNewsArchive:
             last_val = None
             first_date = None
             last_date = None
+            first_daily_change_pct = None
 
             for date_key in sorted_dates:
                 data = history.get(date_key, {}).get(key)
@@ -271,12 +272,20 @@ class WeeklyNewsArchive:
                     if first_val is None:
                         first_val = data["value"]
                         first_date = date_key
+                        first_daily_change_pct = data.get("change_percent", 0)
                     last_val = data["value"]
                     last_date = date_key
 
             if first_val is not None and last_val is not None:
                 change = last_val - first_val
                 change_pct = (change / first_val) * 100 if first_val else 0
+
+                # 1일 데이터만 있으면 (first == last) 당일 변동률 사용
+                if first_date == last_date and first_daily_change_pct:
+                    change_pct = first_daily_change_pct
+                    prev_val = first_val / (1 + first_daily_change_pct / 100) if first_daily_change_pct != -100 else first_val
+                    change = first_val - prev_val
+
                 summary[key] = {
                     "start": first_val,
                     "end": last_val,

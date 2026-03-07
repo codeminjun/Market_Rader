@@ -40,6 +40,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Restore data cache
+        uses: actions/cache@v4
+        with:
+          path: data/
+          key: market-data-${{ github.run_id }}
+          restore-keys: |
+            market-data-
+
       - name: Run Market Rader
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
@@ -52,17 +60,3 @@ jobs:
         run: |
           python src/main.py
 
-      - name: Upload cache artifact
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: sent-items-cache
-          path: data/sent_items.json
-          retention-days: 7
-
-      - name: Download previous cache
-        uses: actions/download-artifact@v4
-        continue-on-error: true
-        with:
-          name: sent-items-cache
-          path: data/

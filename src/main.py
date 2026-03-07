@@ -619,7 +619,7 @@ def send_weekend_to_discord(analyzed: dict, schedule_type: str) -> bool:
                 sector_etf_history=live_sector_history or None,
             )
 
-            # 폴백용 weekly_summary_data 계산
+            # 폴백용 weekly_summary_data 계산 (1일 데이터라도 당일 변동률 표시)
             live_weekly_summary = {}
             if live_market_history:
                 for key in ["kospi", "kosdaq", "usd_krw", "jpy_krw", "eur_krw", "wti", "gold"]:
@@ -629,8 +629,8 @@ def send_weekend_to_discord(analyzed: dict, schedule_type: str) -> bool:
                             live_weekly_summary[key] = {
                                 "start": data["value"],
                                 "end": data["value"],
-                                "change": 0,
-                                "change_pct": 0,
+                                "change": round(data.get("change", 0), 2),
+                                "change_pct": round(data.get("change_percent", 0), 2),
                             }
 
             embeds = create_weekly_review_embed(
