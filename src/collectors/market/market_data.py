@@ -41,6 +41,16 @@ class NightFuturesData:
 
 
 @dataclass
+class OvernightUSData:
+    """미국 장 마감 데이터 (한국 오전 7시 기준 전일 종가)"""
+    name: str               # 지수명 (S&P 500, 나스닥, 다우존스 등)
+    value: float            # 종가
+    change: float           # 변동폭
+    change_percent: float   # 변동률 (%)
+    is_up: bool             # 상승 여부
+
+
+@dataclass
 class SectorETFData:
     """섹터 ETF 시세 데이터"""
     sector: str             # 섹터명 (반도체, 2차전지 등)
@@ -369,6 +379,105 @@ class MarketDataCollector:
         except Exception as e:
             logger.debug(f"Failed to parse commodity item: {e}")
             return None
+
+    # 미국 주요 지수 심볼 (네이버 금융 world 페이지 기준)
+    US_INDEX_SYMBOLS = {
+        "SPI@SPX": "S&P 500",
+        "NAS@IXIC": "나스닥",
+        "DJI@DJI": "다우존스",
+    }
+
+    def collect_overnight_us_market(self) -> list[OvernightUSData]:
+        """
+        미국 장 마감 데이터 수집 (네이버 금융 해외 지수 개별 페이지)
+
+        한국 오전 7시 기준:
+        - 미국 정규장 (23:30~06:00 KST) 마감 직후
+        - 전일 미국 장 종가 및 등락률 확인 가능
+
+        HTML 구조 (finance.naver.com/world/sise.naver):
+        - .no_today: 현재가 (예: "6,795.99")
+        - .no_exday: 변동 정보 (예: "전일대비55.97(+0.83%)")
+        - .no_up/.no_down 클래스로 방향 판단
+
+        Returns:
+            [OvernightUSData, ...] (S&P 500, 나스닥, 다우존스 순)
+            실패 시 빈 리스트 반환
+        """
+        import re
+        import time
+
+        result = []
+
+        for i, (symbol, name) in enumerate(self.US_INDEX_SYMBOLS.items()):
+            if i > 0:
+                time.sleep(0.3)
+
+            try:
+                url = f"https://finance.naver.com/world/sise.naver?symbol={symbol}"
+                response = self._session.get(url, timeout=10)
+                response.raise_for_status()
+                soup = BeautifulSoup(response.text, "lxml")
+
+                # 현재가: .no_today 텍스트에서 숫자 추출
+                value = None
+                value_elem = soup.select_one(".no_today")
+                if value_elem:
+                    value_text = value_elem.get_text(strip=True).replace(",", "")
+                    nums = re.findall(r'[\d]+\.?\d*', value_text)
+                    if nums:
+                        value = float(nums[0])
+
+                if value is None:
+                    continue
+
+                # 변동 정보: .no_exday 텍스트 (예: "전일대비55.97(+0.83%)")
+                change = 0.0
+                change_percent = 0.0
+                is_up = True
+
+                exday_elem = soup.select_one(".no_exday")
+                if exday_elem:
+                    exday_text = exday_elem.get_text(strip=True)
+
+                    # 방향 판단: .no_up 또는 .no_down 자식 요소 확인
+                    if exday_elem.select_one(".no_down"):
+                        is_up = False
+                    elif exday_elem.select_one(".no_up"):
+                        is_up = True
+                    else:
+                        # 텍스트 부호로 판단
+                        is_up = "-" not in exday_text.split("(")[0] if "(" in exday_text else True
+
+                    # 숫자 추출: "전일대비55.97(+0.83%)" → [55.97, 0.83]
+                    nums = re.findall(r'[\d,]+\.?\d*', exday_text.replace(",", ""))
+                    if nums:
+                        change = float(nums[0])
+                    if len(nums) >= 2:
+                        change_percent = float(nums[1])
+
+                if not is_up:
+                    change = -abs(change)
+                    change_percent = -abs(change_percent)
+
+                result.append(OvernightUSData(
+                    name=name,
+                    value=value,
+                    change=change,
+                    change_percent=change_percent,
+                    is_up=is_up,
+                ))
+
+            except Exception as e:
+                logger.debug(f"Failed to scrape US index {name} ({symbol}): {e}")
+                continue
+
+        if result:
+            logger.info(f"Collected {len(result)} overnight US market data")
+        else:
+            logger.warning("Overnight US market collection failed: no data")
+
+        return result
 
     def collect_night_futures(self) -> list[NightFuturesData]:
         """

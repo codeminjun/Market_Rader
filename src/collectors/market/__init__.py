@@ -8,6 +8,7 @@ from src.collectors.market.market_data import (
     IndexData,
     ExchangeRate,
     SectorETFData,
+    OvernightUSData,
 )
 
 __all__ = [
@@ -17,4 +18,5 @@ __all__ = [
     "IndexData",
     "ExchangeRate",
     "SectorETFData",
+    "OvernightUSData",
 ]
