@@ -339,14 +339,57 @@ def analyze_content(
         except Exception as e:
             logger.warning(f"Sector ETF collection failed: {e}")
 
-        # 3-1-1. 야간 선물 마감 데이터 수집 (오전 스케줄용)
-        try:
-            night_futures = market_data_collector.collect_night_futures()
-            if night_futures:
-                result["night_futures"] = night_futures
-                logger.info(f"Collected {len(night_futures)} night futures data")
-        except Exception as e:
-            logger.warning(f"Night futures collection failed: {e}")
+        # 3-1-1. 야간 선물 마감 데이터 수집 (오전 스케줄용 - 점심에는 불필요)
+        if schedule_type == "morning":
+            try:
+                night_futures = market_data_collector.collect_night_futures()
+                if night_futures:
+                    result["night_futures"] = night_futures
+                    logger.info(f"Collected {len(night_futures)} night futures data")
+            except Exception as e:
+                logger.warning(f"Night futures collection failed: {e}")
+
+        # 3-1-3. 미국장 마감 데이터 수집 (오전 스케줄용 - 밤사이 반전 감지)
+        if schedule_type == "morning":
+            try:
+                overnight_us = market_data_collector.collect_overnight_us_market()
+                if overnight_us:
+                    result["overnight_us"] = overnight_us
+                    logger.info(f"Collected {len(overnight_us)} overnight US market data")
+                    for us in overnight_us:
+                        sign = "+" if us.is_up else ""
+                        logger.info(f"  {us.name}: {us.value:,.2f} ({sign}{us.change_percent:.2f}%)")
+            except Exception as e:
+                logger.warning(f"Overnight US market collection failed: {e}")
+
+        # 3-1-4. 점심/장마감용: 오전 시그널 캐시 로드 + 시장 지수 수집
+        morning_signal_cache = None
+        live_market_dict = None
+        if schedule_type in ("noon", "afternoon"):
+            from src.utils.signal_cache import load_morning_signal
+            morning_signal_cache = load_morning_signal()
+            if morning_signal_cache:
+                result["morning_prediction"] = morning_signal_cache
+                logger.info(f"Loaded morning prediction: {morning_signal_cache.get('overall_signal')}")
+
+            # KOSPI/KOSDAQ/환율 수집 (점심: 실시간, 장마감: 종가)
+            try:
+                live_market = market_data_collector.collect()
+                if live_market and (live_market.kospi or live_market.kosdaq):
+                    live_market_dict = {
+                        "kospi": live_market.kospi,
+                        "kosdaq": live_market.kosdaq,
+                        "usd_krw": live_market.usd_krw,
+                    }
+                    result["live_market"] = live_market_dict
+                    if live_market.kospi:
+                        sign = "+" if live_market.kospi.is_up else ""
+                        logger.info(f"{'Closing' if schedule_type == 'afternoon' else 'Live'} KOSPI: {live_market.kospi.value:,.2f} ({sign}{live_market.kospi.change_percent:.2f}%)")
+                    if live_market.kosdaq:
+                        sign = "+" if live_market.kosdaq.is_up else ""
+                        logger.info(f"{'Closing' if schedule_type == 'afternoon' else 'Live'} KOSDAQ: {live_market.kosdaq.value:,.2f} ({sign}{live_market.kosdaq.change_percent:.2f}%)")
+            except Exception as e:
+                logger.warning(f"Market data collection failed: {e}")
 
         # 3-1-2. 시장 지수 수집 (코스피/코스닥/환율 - 주간 아카이브용)
         try:
@@ -357,12 +400,17 @@ def analyze_content(
         except Exception as e:
             logger.warning(f"Market index collection failed: {e}")
 
-        # 3-2. 시장 시그널 분석 (AI + ETF 시세)
+        # 3-2. 시장 시그널 분석 (AI + ETF 시세 + 야간 선물 + 미국장 데이터)
         if not is_dry_run:
             try:
                 result["market_signal"] = market_signal_analyzer.analyze_news_batch(
                     all_news[:15],
                     sector_etf_data=sector_etf_data,
+                    overnight_us_data=result.get("overnight_us"),
+                    night_futures=result.get("night_futures"),
+                    schedule_type=schedule_type,
+                    live_market_data=live_market_dict,
+                    morning_signal_cache=morning_signal_cache,
                 )
                 if result["market_signal"]:
                     logger.info(f"Market signal: {result['market_signal'].get('overall_signal')}")
@@ -794,6 +842,8 @@ def send_to_discord(analyzed: dict) -> bool:
                 morning_briefs=morning_briefs,
                 report_items=reports[:5],
                 intl_news_items=intl_news[:NewsSettings.MAX_INTL_NEWS_FOR_AI] if intl_news else None,
+                overnight_us_data=analyzed.get("overnight_us"),
+                night_futures=analyzed.get("night_futures"),
             )
             if morning_briefing:
                 # 브리핑 검증
@@ -817,7 +867,7 @@ def send_to_discord(analyzed: dict) -> bool:
 
     # 0-2. 장 마감 시황 및 AI 리뷰 (오후 5시 스케줄에서만)
     if schedule_type == "afternoon":
-        # 시장 데이터 수집
+        # 시장 데이터 수집 (종가)
         market_data = None
         try:
             market_data = market_data_collector.collect()
@@ -828,12 +878,14 @@ def send_to_discord(analyzed: dict) -> bool:
         except Exception as e:
             logger.warning(f"Failed to collect market data: {e}")
 
-        # AI 장 마감 리뷰 생성 (정성적 분석만 - 수치는 market_close_embed에서 직접 표시)
+        # AI 장 마감 리뷰 생성 (실제 종가 데이터 포함)
         if all_news and not is_dry_run:
             try:
                 closing_briefing = market_briefing_generator.generate_closing_review(
                     news_items=all_news[:10],
                     report_items=reports[:5] if reports else None,
+                    market_close_data=analyzed.get("live_market"),
+                    morning_signal_cache=analyzed.get("morning_prediction"),
                 )
                 if closing_briefing:
                     # 브리핑 검증 (키워드/출처만 - 수치 검증 불필요)
@@ -857,11 +909,40 @@ def send_to_discord(analyzed: dict) -> bool:
 
     # 1. 시장 시그널 헤더 (AI 분석 결과가 있으면) 또는 일반 헤더
     market_signal = analyzed.get("market_signal")
+
+    # 오전 시그널 캐시 저장 (점심에 비교용)
+    if schedule_type == "morning" and market_signal:
+        try:
+            from src.utils.signal_cache import save_morning_signal
+            save_morning_signal(market_signal)
+        except Exception as e:
+            logger.warning(f"Failed to save morning signal cache: {e}")
+
     if all_news:
         if market_signal:
+            # 미국장 마감 데이터를 signal_data에 포함
+            if analyzed.get("overnight_us"):
+                market_signal["overnight_us"] = analyzed["overnight_us"]
             # 야간 선물 데이터를 signal_data에 포함
             if analyzed.get("night_futures"):
                 market_signal["night_futures"] = analyzed["night_futures"]
+
+            # 점심용: 실시간 지수 + 오전 예측 + 플래그
+            if schedule_type == "noon":
+                market_signal["is_midday"] = True
+                if analyzed.get("live_market"):
+                    market_signal["live_market"] = analyzed["live_market"]
+                if analyzed.get("morning_prediction"):
+                    market_signal["morning_prediction"] = analyzed["morning_prediction"]
+
+            # 장 마감용: 종가 데이터 + 오전 예측 최종 복기 + 플래그
+            if schedule_type == "afternoon":
+                market_signal["is_afternoon"] = True
+                if analyzed.get("live_market"):
+                    market_signal["live_market"] = analyzed["live_market"]
+                if analyzed.get("morning_prediction"):
+                    market_signal["morning_prediction"] = analyzed["morning_prediction"]
+
             signal_embed = create_market_signal_embed(
                 date=now,
                 signal_data=market_signal,

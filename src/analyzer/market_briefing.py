@@ -69,15 +69,19 @@ class MarketBriefingGenerator:
         self,
         news_items: list[ContentItem],
         report_items: list[ContentItem] = None,
+        market_close_data: dict = None,
+        morning_signal_cache: dict = None,
     ) -> Optional[MarketBriefing]:
         """
         장 마감 리뷰 생성 (오후 5시용)
-        실제 뉴스/리포트 내용을 분석하여 정성적 리뷰 작성
-        (수치는 별도 market_close_embed에서 크롤링 데이터로 직접 표시)
+        실제 뉴스/리포트 + 종가 데이터를 기반으로 복기 리뷰 작성
+        (수치는 별도 market_close_embed에서 직접 표시하므로 AI는 정성적 표현만 사용)
 
         Args:
             news_items: 오늘의 주요 뉴스
             report_items: 오늘의 리포트 (AI 분석 포함)
+            market_close_data: 장 마감 데이터 {"kospi": IndexData, "kosdaq": IndexData, ...}
+            morning_signal_cache: 오전 예측 캐시 (비교용)
 
         Returns:
             MarketBriefing 객체
@@ -91,9 +95,16 @@ class MarketBriefingGenerator:
 
         all_sources = news_sources + report_sources
 
+        # 장 마감 데이터 컨텍스트
+        close_context = self._format_market_close_data(market_close_data)
+
+        # 오전 예측 컨텍스트
+        morning_context = self._format_morning_prediction(morning_signal_cache)
+
         prompt = f"""아래 제공된 실제 데이터만을 기반으로 오늘의 장 마감 리뷰를 작성해주세요.
 모든 문장은 '해요체'로 친근하게 작성하세요.
-
+{close_context}
+{morning_context}
 === 오늘의 주요 뉴스 (실제 기사) ===
 {news_text}
 
@@ -102,10 +113,10 @@ class MarketBriefingGenerator:
 
 위 데이터를 종합 분석하여 다음 JSON 형식으로 응답해주세요:
 {{
-    "greeting": "오늘 장 마감 인사 (해요체, 친근하게, 1문장). 예: '오늘 장이 마감됐어요.'",
-    "summary": "오늘 시장 핵심 흐름 요약 (해요체, 2-3문장). 수치 없이 '상승했어요', '하락했어요' 같은 정성적 표현만 사용하세요.",
-    "key_points": ["핵심 포인트 3-5개 (해요체, 출처 명시). 예: '반도체 업황이 좋아지고 있어요 (한경)'"],
-    "action_items": ["내일 주목할 점 2-3개 (해요체). 예: '내일은 ~를 눈여겨보면 좋아요'"],
+    "greeting": "오늘 장 마감 인사 (해요체, 친근하게, 1문장). 장 결과를 반영한 인사. 예: '오늘 장이 크게 하락하며 마감됐어요.'",
+    "summary": "오늘 시장 핵심 흐름 요약 (해요체, 2-3문장). 수치 없이 '크게 하락했어요', '소폭 상승했어요' 같은 정성적 표현만 사용하세요. 왜 이런 결과가 나왔는지 핵심 원인을 포함하세요.",
+    "key_points": ["핵심 포인트 3-5개 (해요체, 출처 명시). 예: '중동 리스크로 반도체주가 급락했어요 (한경)'"],
+    "action_items": ["내일 주목할 점 2-3개 (해요체). 예: '내일은 기술적 반등 여부를 눈여겨보면 좋아요'"],
     "closing": "마무리 인사 (해요체, 1문장). 예: '내일도 좋은 하루 보내세요!'",
     "mood": "positive/neutral/negative"
 }}
@@ -115,7 +126,9 @@ class MarketBriefingGenerator:
 2. 🌟 우선 반영: "사용자 관심 뉴스" 섹션 기사를 반드시 summary와 key_points에 포함하세요
 3. 수치 금지: 코스피/코스닥 지수, 환율, 등락률 등 구체적 숫자를 절대 쓰지 마세요. 수치는 별도로 표시돼요.
 4. 출처 필수: 모든 정보에 출처를 괄호로 표시하세요
-5. 금지: 위 데이터에 없는 정보 사용 금지"""
+5. 금지: 위 데이터에 없는 정보 사용 금지
+6. 장 결과 반영: 장 마감 데이터가 제공된 경우 greeting과 summary에 실제 결과 방향(상승/하락/보합)을 반영하세요.
+7. 오전 예측 비교: 오전 예측이 제공된 경우, summary에서 예측 대비 실제 결과를 간략히 언급하세요."""
 
         try:
             result = self.client.generate_json(
@@ -146,6 +159,8 @@ class MarketBriefingGenerator:
         morning_briefs: list[ContentItem] = None,
         report_items: list[ContentItem] = None,
         intl_news_items: list[ContentItem] = None,
+        overnight_us_data: list = None,
+        night_futures: list = None,
     ) -> Optional[MarketBriefing]:
         """
         아침 전략 브리핑 생성 (오전 7시용)
@@ -171,9 +186,14 @@ class MarketBriefingGenerator:
 
         all_sources = brief_sources + news_sources + intl_sources + report_sources
 
+        # 미국장 마감 + 야간 선물 데이터 컨텍스트
+        us_market_text = self._format_overnight_us_data(overnight_us_data)
+        night_futures_text = self._format_night_futures_data(night_futures)
+
         prompt = f"""아래 제공된 실제 데이터만을 기반으로 오늘의 장 전략 브리핑을 작성해주세요.
 모든 문장은 '해요체'로 친근하게 작성하세요.
-
+{us_market_text}
+{night_futures_text}
 === 증권사 Morning Brief (전문가 분석) ===
 {brief_text if brief_text else "Morning Brief 없음"}
 
@@ -202,7 +222,8 @@ class MarketBriefingGenerator:
 3. Morning Brief 우선: Morning Brief 내용이 있다면 가장 우선 반영하세요
 4. 해외 뉴스 활용: 해외 주요 뉴스를 전략에 자연스럽게 녹여주세요 (한줄 요약 형태)
 5. 출처 필수: 모든 정보에 출처를 괄호로 표시하세요
-6. 금지: 위 데이터에 없는 정보/숫자 사용 금지"""
+6. 금지: 위 데이터에 없는 정보/숫자 사용 금지
+7. ⚠️ 미국장 마감 데이터 최우선 반영: 미국장 데이터가 있다면 반드시 summary 첫 문장에서 미국 시장 동향을 언급하세요. 전일 한국 뉴스가 악재라도 밤사이 미국장이 반등했다면 '갭업 출발 가능성'을 언급하세요. 반대의 경우 '하방 압력'을 언급하세요."""
 
         try:
             result = self.client.generate_json(
@@ -226,6 +247,81 @@ class MarketBriefingGenerator:
             logger.error(f"Failed to generate morning strategy: {e}")
 
         return None
+
+    def _format_night_futures_data(self, night_futures: list = None) -> str:
+        """야간 선물 마감 데이터를 텍스트로 변환"""
+        if not night_futures:
+            return ""
+
+        lines = ["\n=== 🌙 야간 선물 마감 (한국 장 시초가 방향 지표) ==="]
+        for nf in night_futures:
+            sign = "+" if nf.change_percent >= 0 else ""
+            direction = "상승" if nf.is_up else "하락"
+            lines.append(f"- {nf.name}: {nf.price:,.2f} ({sign}{nf.change_percent:.2f}%, {direction})")
+
+        lines.append("(야간 선물 방향 = 오늘 시초가 방향. 반드시 greeting과 summary에 반영하세요.)")
+        lines.append("")
+        return "\n".join(lines)
+
+    def _format_overnight_us_data(self, overnight_us_data: list = None) -> str:
+        """미국장 마감 데이터를 텍스트로 변환"""
+        if not overnight_us_data:
+            return ""
+
+        lines = ["\n=== ⚠️ 미국장 마감 데이터 (밤사이 실제 결과 - 최우선 반영) ==="]
+        for us in overnight_us_data:
+            sign = "+" if us.is_up else ""
+            direction = "상승" if us.is_up else "하락"
+            lines.append(f"- {us.name}: {us.value:,.2f} ({sign}{us.change_percent:.2f}%, {direction})")
+
+        lines.append("(⚠️ 미국장 결과는 한국 장 방향에 가장 큰 영향을 미칩니다. 반드시 반영하세요.)")
+        lines.append("")
+        return "\n".join(lines)
+
+    def _format_market_close_data(self, market_close_data: dict = None) -> str:
+        """장 마감 데이터를 AI에게 전달할 컨텍스트로 변환"""
+        if not market_close_data:
+            return ""
+
+        lines = ["\n=== 📊 오늘 장 마감 결과 (방향 참고용 - 수치는 쓰지 마세요) ==="]
+
+        kospi = market_close_data.get("kospi")
+        if kospi:
+            direction = "상승" if kospi.is_up else "하락"
+            magnitude = "크게 " if abs(kospi.change_percent) >= 2 else "소폭 " if abs(kospi.change_percent) < 0.5 else ""
+            lines.append(f"- 코스피: {magnitude}{direction} (방향만 참고, 수치 사용 금지)")
+
+        kosdaq = market_close_data.get("kosdaq")
+        if kosdaq:
+            direction = "상승" if kosdaq.is_up else "하락"
+            magnitude = "크게 " if abs(kosdaq.change_percent) >= 2 else "소폭 " if abs(kosdaq.change_percent) < 0.5 else ""
+            lines.append(f"- 코스닥: {magnitude}{direction}")
+
+        lines.append("(⚠️ 수치는 별도 표시되므로, 여기서는 '상승했어요'/'하락했어요' 같은 정성적 표현만 사용하세요.)")
+        lines.append("")
+        return "\n".join(lines)
+
+    def _format_morning_prediction(self, morning_signal_cache: dict = None) -> str:
+        """오전 예측을 AI에게 전달할 컨텍스트로 변환"""
+        if not morning_signal_cache:
+            return ""
+
+        signal_kr = {
+            "strong_bullish": "강한 상승",
+            "bullish": "상승",
+            "neutral": "중립",
+            "bearish": "하락",
+            "strong_bearish": "강한 하락",
+        }
+
+        overall = morning_signal_cache.get("overall_signal", "neutral")
+        strength = morning_signal_cache.get("signal_strength", 0.5)
+
+        lines = ["\n=== 📋 오전 7시 예측 (비교용) ==="]
+        lines.append(f"- 오전 예측: {signal_kr.get(overall, overall)} ({int(strength*100)}%)")
+        lines.append("(오전 예측과 실제 결과를 비교하여 summary에서 간략히 언급하세요. 예: '오전에 하락을 예측했는데 실제로도 크게 하락했어요')")
+        lines.append("")
+        return "\n".join(lines)
 
     def _format_news_detailed(self, items: list[ContentItem]) -> tuple[str, list[str]]:
         """

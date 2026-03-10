@@ -170,39 +170,127 @@ def create_market_signal_embed(
     # 강도 바 생성
     strength_bar = "█" * int(signal_strength * 10) + "░" * (10 - int(signal_strength * 10))
 
+    # 시간대 플래그
+    is_midday = signal_data.get("is_midday", False)
+    is_afternoon = signal_data.get("is_afternoon", False)
+
     # 제목 설정
     if title_override:
         title = f"{signal_emoji} {title_override} - {date_str}"
+    elif is_afternoon:
+        title = f"{signal_emoji} {date_str} 장 마감 분석: {signal_name}"
+    elif is_midday:
+        title = f"{signal_emoji} {date_str} 장중 시그널: {signal_name}"
     else:
-        title = f"{signal_emoji} {date_str} 시장 시그널: {signal_name}"
+        title = f"{signal_emoji} {date_str} 오늘 장 전망: {signal_name}"
 
     embed = DiscordEmbed(
         title=title,
         color=signal_color,
     )
-
-    # 시그널 강도 표시
+    if is_afternoon:
+        signal_label = "📊 오늘 장 마감"
+    elif is_midday:
+        signal_label = "📊 장중 시그널"
+    else:
+        signal_label = "📊 오늘 장 전망"
     embed.add_embed_field(
-        name="📊 시장 시그널",
+        name=signal_label,
         value=f"**{signal_emoji} {signal_name}** `{strength_bar}` {int(signal_strength * 100)}%",
         inline=False,
     )
 
-    # 야간 선물 마감 데이터
-    night_futures = signal_data.get("night_futures", [])
-    if night_futures:
-        futures_lines = []
-        for nf in night_futures:
-            sign = "+" if nf.change_percent >= 0 else ""
-            arrow = "📈" if nf.is_up else "📉"
-            futures_lines.append(
-                f"**{nf.name}**: {nf.price:,.2f} ({sign}{nf.change_percent:.2f}%) {arrow}"
+    # 실시간 지수 (점심 브리핑용 - 장 마감은 market_close_embed에서 표시)
+    live_market = signal_data.get("live_market")
+    if live_market and is_midday:
+        idx_lines = []
+        for key, name_kr in [("kospi", "코스피"), ("kosdaq", "코스닥"), ("usd_krw", "원/달러")]:
+            data = live_market.get(key)
+            if data:
+                sign = "+" if data.is_up else ""
+                arrow = "📈" if data.is_up else "📉"
+                idx_lines.append(
+                    f"**{name_kr}**: {data.value:,.2f} ({sign}{data.change_percent:.2f}%) {arrow}"
+                )
+        if idx_lines:
+            embed.add_embed_field(
+                name="🇰🇷 실시간 지수",
+                value="\n".join(idx_lines),
+                inline=False,
             )
-        embed.add_embed_field(
-            name="🌙 야간 선물 마감",
-            value="\n".join(futures_lines),
-            inline=False,
-        )
+
+    # 오전 전망 복기 (점심: 중간 복기, 장마감: 최종 복기)
+    morning_prediction = signal_data.get("morning_prediction")
+    if morning_prediction and live_market:
+        from src.utils.signal_cache import evaluate_prediction_accuracy
+        kospi_data = live_market.get("kospi")
+        if kospi_data:
+            accuracy = evaluate_prediction_accuracy(
+                morning_prediction,
+                kospi_data.change_percent,
+            )
+            morning_signal_kr = {
+                "strong_bullish": "강한 상승", "bullish": "상승",
+                "neutral": "중립", "bearish": "하락", "strong_bearish": "강한 하락",
+            }
+            morning_emoji = {
+                "strong_bullish": "🚀", "bullish": "📈",
+                "neutral": "➡️", "bearish": "📉", "strong_bearish": "💥",
+            }
+            m_signal = morning_prediction.get("overall_signal", "neutral")
+            m_strength = morning_prediction.get("signal_strength", 0.5)
+            m_emoji = morning_emoji.get(m_signal, "➡️")
+            m_name = morning_signal_kr.get(m_signal, "중립")
+
+            # AI 코멘트가 있으면 사용
+            ai_comment = signal_data.get("morning_accuracy_comment", "")
+            comment_text = ai_comment if ai_comment else accuracy["comment"]
+
+            actual_label = "장 마감 결과" if is_afternoon else "현재 실제"
+            prediction_text = (
+                f"오전 예측: **{m_emoji} {m_name} {int(m_strength*100)}%**\n"
+                f"{actual_label}: **코스피 {kospi_data.change_percent:+.2f}%**\n"
+                f"결과: **{accuracy['emoji']} {accuracy['result']}** - {comment_text}"
+            )
+            review_label = "📋 오전 전망 최종 복기" if is_afternoon else "📋 오전 전망 복기"
+            embed.add_embed_field(
+                name=review_label,
+                value=prediction_text,
+                inline=False,
+            )
+
+    # 미국장 마감 데이터 (오전 브리핑용 - 점심/장마감에는 표시 안함)
+    if not is_midday and not is_afternoon:
+        overnight_us = signal_data.get("overnight_us", [])
+        if overnight_us:
+            us_lines = []
+            for us in overnight_us:
+                sign = "+" if us.is_up else ""
+                arrow = "📈" if us.is_up else "📉"
+                us_lines.append(
+                    f"**{us.name}**: {us.value:,.2f} ({sign}{us.change_percent:.2f}%) {arrow}"
+                )
+            embed.add_embed_field(
+                name="🇺🇸 미국장 마감",
+                value="\n".join(us_lines),
+                inline=False,
+            )
+
+        # 야간 선물 마감 데이터 (오전 브리핑용 - 점심에는 표시 안함)
+        night_futures = signal_data.get("night_futures", [])
+        if night_futures:
+            futures_lines = []
+            for nf in night_futures:
+                sign = "+" if nf.change_percent >= 0 else ""
+                arrow = "📈" if nf.is_up else "📉"
+                futures_lines.append(
+                    f"**{nf.name}**: {nf.price:,.2f} ({sign}{nf.change_percent:.2f}%) {arrow}"
+                )
+            embed.add_embed_field(
+                name="🌙 야간 선물 마감",
+                value="\n".join(futures_lines),
+                inline=False,
+            )
 
     # SWOT 분석
     swot = signal_data.get("swot", {})
@@ -230,6 +318,18 @@ def create_market_signal_embed(
     # 섹터별 시그널 → BCG 매트릭스
     sector_signals = signal_data.get("sector_signals", {})
     sector_etf_data = signal_data.get("sector_etf_data", {})
+
+    # ETF 데이터 정합성 검증: 실시간 지수와 방향이 크게 다르면 ETF 데이터 제외
+    if live_market and sector_etf_data:
+        kospi_data = live_market.get("kospi")
+        if kospi_data and abs(kospi_data.change_percent) >= 3.0:
+            # 코스피 -3% 이상인데 ETF 80% 이상이 양수 → ETF 데이터 이상
+            positive_etfs = sum(1 for e in sector_etf_data.values() if e.change_percent > 0)
+            if kospi_data.change_percent < -3.0 and positive_etfs > len(sector_etf_data) * 0.8:
+                sector_etf_data = {}  # 이상 데이터 제외
+            elif kospi_data.change_percent > 3.0 and positive_etfs < len(sector_etf_data) * 0.2:
+                sector_etf_data = {}
+
     if sector_signals:
         bcg = _classify_bcg(sector_signals, sector_etf_data)
         bcg_lines = []
@@ -253,8 +353,14 @@ def create_market_signal_embed(
     key_events = signal_data.get("key_events", [])
     if key_events:
         events_text = "\n".join([f"• {e}" for e in key_events[:4]])
+        if is_afternoon:
+            events_label = "🎯 오늘 장 주요 이슈"
+        elif is_midday:
+            events_label = "🎯 오전장 주요 이슈"
+        else:
+            events_label = "🎯 오늘 장에 영향을 줄 이벤트"
         embed.add_embed_field(
-            name="🎯 오늘 이런 일이 있어요",
+            name=events_label,
             value=events_text[:500],
             inline=False,
         )
@@ -263,16 +369,28 @@ def create_market_signal_embed(
     risk_factors = signal_data.get("risk_factors", [])
     if risk_factors:
         risk_text = "\n".join([f"⚠️ {r}" for r in risk_factors[:3]])
+        if is_afternoon:
+            risk_label = "🛡️ 오늘의 교훈"
+        elif is_midday:
+            risk_label = "🛡️ 오후 장 주의사항"
+        else:
+            risk_label = "🛡️ 이런 점은 주의하세요"
         embed.add_embed_field(
-            name="🛡️ 이런 점은 주의하세요",
+            name=risk_label,
             value=risk_text[:300],
             inline=True,
         )
 
     # 투자 기회
     if "opportunity" in signal_data:
+        if is_afternoon:
+            opp_label = "💡 내일 주목 포인트"
+        elif is_midday:
+            opp_label = "💡 오후 기회 포인트"
+        else:
+            opp_label = "💡 이런 기회가 보여요"
         embed.add_embed_field(
-            name="💡 이런 기회가 보여요",
+            name=opp_label,
             value=signal_data["opportunity"][:300],
             inline=True,
         )

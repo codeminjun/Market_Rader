@@ -34,14 +34,20 @@ class MarketSignalAnalyzer:
     """AI 기반 시장 시그널 분석기"""
 
     SYSTEM_PROMPT = """당신은 월스트리트 퀀트 애널리스트입니다.
-뉴스를 분석하여 시장 영향과 투자 시그널을 평가합니다.
-객관적이고 데이터 기반으로 분석하며, 낙관 편향을 경계합니다.
+전일 뉴스, 밤사이 미국장 결과, 야간 선물 데이터를 종합하여
+"오늘 한국 장이 어떻게 될 것인가"를 예측합니다.
+
+핵심 분석 프레임워크 (우선순위 순):
+1. 야간 선물/미국장 실제 데이터 → 가장 강력한 방향 지표
+2. 섹터 ETF 실시간 시세 → 현재 시장이 이미 반영한 방향
+3. 뉴스 감성 → 참고 자료 (이미 시장에 반영되었을 수 있음)
 
 중요 원칙:
-- 긍정적 뉴스가 많더라도 모든 섹터를 "bullish"로 평가하지 마세요
+- 뉴스 감성과 실제 시장 데이터가 상충할 때, 시장 데이터를 우선하세요
+- 전일 대폭락 후에는 기술적 반등 가능성을 반드시 고려하세요
 - 각 섹터를 독립적으로 분석하고, 해당 섹터의 뉴스 내용만으로 판단하세요
 - 명확한 호재/악재가 없는 섹터는 반드시 "neutral"로 평가하세요
-- 리스크 요인이 언급된 섹터는 하락 시그널을 고려하세요"""
+- 모든 섹터를 동일한 시그널로 평가하지 마세요"""
 
     # 유효한 섹터 시그널 값
     VALID_SECTOR_SIGNALS = {"bullish", "neutral", "bearish"}
@@ -86,6 +92,11 @@ class MarketSignalAnalyzer:
         items: list[ContentItem],
         max_items: int = 15,
         sector_etf_data: dict = None,
+        overnight_us_data: list = None,
+        night_futures: list = None,
+        schedule_type: str = "morning",
+        live_market_data=None,
+        morning_signal_cache: dict = None,
     ) -> Optional[dict]:
         """
         뉴스 배치 분석 및 시장 시그널 생성
@@ -130,12 +141,31 @@ class MarketSignalAnalyzer:
         # 3.5단계: ETF 시세 컨텍스트 생성
         etf_context = self._build_etf_context(sector_etf_data)
 
+        # 3.6단계: 미국장 마감 데이터 컨텍스트 생성
+        us_market_context = self._build_overnight_us_context(overnight_us_data)
+
+        # 3.7단계: 야간 선물 데이터 컨텍스트 생성
+        night_futures_context = self._build_night_futures_context(night_futures)
+
         # 4단계: 분석 대상 섹터 목록 (뉴스에 언급된 것만)
         target_sectors = list(detected_sectors.keys())
 
-        prompt = f"""다음 오늘의 주요 금융 뉴스를 분석하여 시장 시그널을 평가해주세요.
-
-=== 전체 뉴스 ===
+        if schedule_type == "noon":
+            prompt = self._build_midday_prompt(
+                news_text, sector_context, etf_context,
+                target_sectors, live_market_data, morning_signal_cache,
+            )
+        elif schedule_type == "afternoon":
+            prompt = self._build_afternoon_prompt(
+                news_text, sector_context, etf_context,
+                target_sectors, live_market_data, morning_signal_cache,
+            )
+        else:
+            prompt = f"""당신의 임무: 오늘 한국 주식 시장이 어떻게 움직일지 전망하세요.
+아래 데이터를 종합하여 "오늘 장 전망"을 예측해주세요. 어제 이미 일어난 일이 아니라, 오늘 장에 어떤 영향을 줄지를 분석하세요.
+{us_market_context}
+{night_futures_context}
+=== 전일 이후 주요 뉴스 ===
 {news_text}
 
 === 섹터별 관련 뉴스 ===
@@ -148,35 +178,36 @@ class MarketSignalAnalyzer:
 {{
     "overall_signal": "strong_bullish/bullish/neutral/bearish/strong_bearish 중 하나",
     "signal_strength": 0.0에서 1.0 사이 (확신도),
-    "market_sentiment": "전반적인 시장 분위기 요약 (1-2문장)",
+    "market_sentiment": "오늘 한국 장 전망 요약 (1-2문장, '오늘 장은 ~할 것으로 예상' 형태)",
     "swot": {{
-        "strengths": ["시장 강점 1-2개 (출처 포함). 예: HBM 수요 견조 (한경)"],
-        "weaknesses": ["시장 약점 1-2개. 예: 원화 약세 지속"],
-        "opportunities": ["투자 기회 1-2개. 예: 미국 AI 인프라 투자 확대"],
-        "threats": ["위협 요인 1-2개. 예: 미중 관세 갈등 재점화"]
+        "strengths": ["오늘 장에 긍정적 요인 1-2개 (출처 포함)"],
+        "weaknesses": ["오늘 장에 부정적 요인 1-2개"],
+        "opportunities": ["오늘 주목할 투자 기회 1-2개"],
+        "threats": ["오늘 주의할 위협 요인 1-2개"]
     }},
     "sector_signals": {{
         "섹터명": "bullish/neutral/bearish"
     }},
-    "key_events": ["오늘 가장 중요한 이벤트 1", "이벤트 2", "이벤트 3"],
-    "risk_factors": ["주의할 리스크 요인"],
+    "key_events": ["오늘 장에 영향을 줄 핵심 이벤트 (어제 이미 끝난 일 제외)", "이벤트 2", "이벤트 3"],
+    "risk_factors": ["오늘 장에서 주의할 리스크 요인"],
     "opportunity": "오늘의 투자 기회나 주목 포인트 (1문장)"
 }}
 
 === 필수 규칙 ===
-1. sector_signals에는 위 "분석 대상 섹터"에 나열된 섹터명만 사용하세요. 다른 이름을 만들지 마세요.
-2. 각 섹터는 해당 섹터의 관련 뉴스만 보고 독립적으로 판단하세요.
-3. 명확한 호재가 없으면 "neutral"로, 악재가 있으면 "bearish"로 평가하세요.
-4. 모든 섹터를 동일한 시그널로 평가하지 마세요. 각 섹터의 뉴스 내용이 다르면 시그널도 달라야 합니다.
-5. "해당 섹터에 대한 뉴스는 있지만 방향성이 불분명한 경우"는 반드시 "neutral"입니다.
-6. 실제 섹터 ETF 시세가 제공된 경우, 뉴스와 시세를 교차 검증하세요. ETF가 하락 중인데 뉴스가 호재면 "neutral"로 하향 조정을, ETF가 상승 중인데 뉴스가 악재면 "neutral"로 상향 조정을 고려하세요.
+1. ⚠️ 이것은 "오늘 장 전망"입니다. 어제 이미 발생한 이벤트(예: "어제 코스피 급락", "어제 서킷브레이커 발동")를 key_events에 넣지 마세요. 대신 그 여파로 오늘 어떤 일이 일어날지 예측하세요.
+2. 야간 선물/미국장 데이터가 있으면 이를 최우선 근거로 사용하세요. 뉴스가 악재 위주라도 야간 선물이 상승 마감했다면 "갭업 출발" 가능성이 높습니다.
+3. sector_signals에는 위 "분석 대상 섹터"에 나열된 섹터명만 사용하세요.
+4. 각 섹터는 독립적으로 판단하세요. 모든 섹터를 동일 시그널로 평가하지 마세요.
+5. 명확한 호재가 없으면 "neutral"로, 악재가 있으면 "bearish"로 평가하세요.
+6. 실제 섹터 ETF 시세가 제공된 경우, 뉴스와 교차 검증하세요.
+7. 전일 대폭락(-5% 이상) 뉴스가 있고 야간 선물/미국장이 반등했다면, "기술적 반등" 가능성을 반드시 반영하세요.
 
-분석 기준:
-- strong_bullish: 시장 전반 강한 상승 기대 (호재 다수)
-- bullish: 상승 우위 (호재 > 악재)
-- neutral: 혼조세 또는 영향 제한적
-- bearish: 하락 우위 (악재 > 호재)
-- strong_bearish: 시장 전반 강한 하락 우려 (악재 다수)"""
+시그널 기준 (오늘 장 전망):
+- strong_bullish: 오늘 강한 상승 예상 (야간 선물 상승 + 호재)
+- bullish: 오늘 상승 우위 (호재 > 악재, 또는 야간 선물 소폭 상승)
+- neutral: 혼조세/방향 불확실
+- bearish: 오늘 하락 우위 (야간 선물 하락, 또는 악재 > 호재)
+- strong_bearish: 오늘 강한 하락 예상 (야간 선물 하락 + 악재 다수)"""
 
         try:
             result = self.client.generate_json(
@@ -253,6 +284,39 @@ class MarketSignalAnalyzer:
             lines.append(f"- {sector}: {etf.etf_name} {sign}{etf.change_percent:.2f}% (현재가 {etf.price:,.0f}원)")
 
         lines.append("(위 ETF 시세는 실제 시장 데이터입니다. 뉴스 판단과 교차 검증에 활용하세요.)")
+        return "\n".join(lines)
+
+    def _build_night_futures_context(self, night_futures: list = None) -> str:
+        """야간 선물 마감 데이터를 AI에게 전달할 컨텍스트로 구성"""
+        if not night_futures:
+            return ""
+
+        lines = ["\n=== 🌙 야간 선물 마감 데이터 (한국 시장 직접 선행 지표) ==="]
+        for nf in night_futures:
+            sign = "+" if nf.change_percent >= 0 else ""
+            arrow = "📈" if nf.is_up else "📉"
+            lines.append(f"- {nf.name}: {nf.price:,.2f} ({sign}{nf.change_percent:.2f}%) {arrow}")
+
+        lines.append("")
+        lines.append("⚠️ 야간 선물은 오늘 한국 장 시초가 방향을 가장 직접적으로 예측합니다.")
+        lines.append("야간 선물이 +1% 이상이면 갭업 출발, -1% 이상이면 갭다운 출발 가능성이 높습니다.")
+        return "\n".join(lines)
+
+    def _build_overnight_us_context(self, overnight_us_data: list = None) -> str:
+        """미국장 마감 데이터를 AI에게 전달할 컨텍스트로 구성"""
+        if not overnight_us_data:
+            return ""
+
+        lines = ["\n=== ⚠️ 미국장 마감 데이터 (밤사이 실제 결과 - 매우 중요) ==="]
+        for us in overnight_us_data:
+            sign = "+" if us.is_up else ""
+            arrow = "📈" if us.is_up else "📉"
+            lines.append(f"- {us.name}: {us.value:,.2f} ({sign}{us.change_percent:.2f}%) {arrow}")
+
+        lines.append("")
+        lines.append("⚠️ 위 미국장 데이터는 한국 장 개장 전 실제 마감 결과입니다.")
+        lines.append("한국 뉴스가 전일 악재 위주라도 밤사이 미국장이 반등했다면 한국 시장도 갭업 가능성이 높습니다.")
+        lines.append("뉴스 톤과 미국장 방향이 다를 경우, 미국장 실제 결과를 더 신뢰하세요.")
         return "\n".join(lines)
 
     def _validate_signal_response(
@@ -376,20 +440,262 @@ class MarketSignalAnalyzer:
         except ValueError:
             return 0x808080
 
+    def _build_midday_prompt(
+        self,
+        news_text: str,
+        sector_context: str,
+        etf_context: str,
+        target_sectors: list[str],
+        live_market_data=None,
+        morning_signal_cache: dict = None,
+    ) -> str:
+        """점심 브리핑용 프롬프트 (장중 상황 체크)"""
+        live_context = self._build_live_market_context(live_market_data)
+        morning_context = self._build_morning_prediction_context(morning_signal_cache)
+
+        return f"""당신의 임무: 현재 진행 중인 한국 장의 상황을 분석하세요.
+오전에 수집된 뉴스와 실시간 시장 데이터를 종합하여 "장중 상황 체크"를 수행합니다.
+{live_context}
+{morning_context}
+=== 오전장 주요 뉴스 ===
+{news_text}
+
+=== 섹터별 관련 뉴스 ===
+{sector_context}
+{etf_context}
+=== 분석 대상 섹터 (이 섹터들만 분석하세요) ===
+{', '.join(target_sectors)}
+
+다음 JSON 형식으로 응답해주세요:
+{{
+    "overall_signal": "strong_bullish/bullish/neutral/bearish/strong_bearish 중 하나 (현재 장 방향)",
+    "signal_strength": 0.0에서 1.0 사이 (확신도),
+    "market_sentiment": "현재 장 상황 요약 (1-2문장, '현재 장은 ~하고 있어요' 형태)",
+    "morning_accuracy": "적중/불일치/부분적중 (오전 예측 대비 실제 결과)",
+    "morning_accuracy_comment": "오전 예측이 어떻게 됐는지 코멘트 (1문장, 해요체)",
+    "swot": {{
+        "strengths": ["오전장 긍정적 요인 1-2개 (출처 포함)"],
+        "weaknesses": ["오전장 부정적 요인 1-2개"],
+        "opportunities": ["오후 장 투자 기회 1-2개"],
+        "threats": ["오후 장 주의할 위협 1-2개"]
+    }},
+    "sector_signals": {{
+        "섹터명": "bullish/neutral/bearish"
+    }},
+    "key_events": ["오전장에 발생한 주요 이슈 3-4개 (현재 진행 중인 것 위주)"],
+    "risk_factors": ["오후 장에서 주의할 리스크 요인"],
+    "opportunity": "오후 투자 기회나 주목 포인트 (1문장)"
+}}
+
+=== 필수 규칙 ===
+1. ⚠️ 이것은 "장중 상황 체크"입니다. 현재 실시간 지수 데이터가 제공된 경우 이를 최우선으로 반영하세요.
+2. 오전 예측(morning_prediction)이 제공된 경우, 실제 지수 방향과 비교하여 morning_accuracy를 평가하세요.
+3. sector_signals에는 위 "분석 대상 섹터"에 나열된 섹터명만 사용하세요.
+4. 각 섹터는 독립적으로 판단하세요.
+5. ETF 시세가 실시간 지수 방향과 크게 다르면(예: 코스피 -8%인데 ETF 전부 양수), ETF 데이터는 무시하고 실시간 지수를 기준으로 판단하세요.
+6. key_events에는 오전장에 실제 일어난 이슈(서킷브레이커, 급등락 등)를 넣으세요.
+7. risk_factors와 opportunity에는 오후 장에 대한 전망을 넣으세요.
+
+시그널 기준 (현재 장 상황):
+- strong_bullish: 현재 강한 상승세 (+3% 이상)
+- bullish: 현재 상승세 (+0.5% ~ +3%)
+- neutral: 보합/혼조세 (-0.5% ~ +0.5%)
+- bearish: 현재 하락세 (-0.5% ~ -3%)
+- strong_bearish: 현재 강한 하락세 (-3% 이상)"""
+
+    def _build_afternoon_prompt(
+        self,
+        news_text: str,
+        sector_context: str,
+        etf_context: str,
+        target_sectors: list[str],
+        live_market_data=None,
+        morning_signal_cache: dict = None,
+    ) -> str:
+        """장 마감 브리핑용 프롬프트 (오늘 장 복기)"""
+        close_context = self._build_market_close_context(live_market_data)
+        morning_context = self._build_morning_prediction_context(morning_signal_cache)
+
+        return f"""당신의 임무: 오늘 한국 장이 마감됐습니다. 오늘 장을 복기하세요.
+오늘 하루 뉴스와 실제 장 마감 데이터를 종합하여 "오늘 장 마감 분석"을 수행합니다.
+{close_context}
+{morning_context}
+=== 오늘의 주요 뉴스 ===
+{news_text}
+
+=== 섹터별 관련 뉴스 ===
+{sector_context}
+{etf_context}
+=== 분석 대상 섹터 (이 섹터들만 분석하세요) ===
+{', '.join(target_sectors)}
+
+다음 JSON 형식으로 응답해주세요:
+{{
+    "overall_signal": "strong_bullish/bullish/neutral/bearish/strong_bearish 중 하나 (오늘 장 결과)",
+    "signal_strength": 0.0에서 1.0 사이 (확신도),
+    "market_sentiment": "오늘 장 마감 요약 (1-2문장, '오늘 장은 ~했어요' 형태)",
+    "morning_accuracy": "적중/불일치/부분적중 (오전 예측 대비 최종 결과)",
+    "morning_accuracy_comment": "오전 예측이 최종적으로 어떻게 됐는지 코멘트 (1문장, 해요체)",
+    "swot": {{
+        "strengths": ["오늘 장에서 긍정적이었던 요인 1-2개 (출처 포함)"],
+        "weaknesses": ["오늘 장에서 부정적이었던 요인 1-2개"],
+        "opportunities": ["내일 주목할 투자 기회 1-2개"],
+        "threats": ["내일 주의할 위협 요인 1-2개"]
+    }},
+    "sector_signals": {{
+        "섹터명": "bullish/neutral/bearish"
+    }},
+    "key_events": ["오늘 장에서 실제 일어난 주요 이슈 3-4개"],
+    "risk_factors": ["오늘의 교훈 또는 주의점"],
+    "opportunity": "내일 주목할 포인트 (1문장)"
+}}
+
+=== 필수 규칙 ===
+1. ⚠️ 이것은 "장 마감 복기"입니다. 장 마감 데이터가 제공된 경우 이를 최우선으로 반영하세요.
+2. overall_signal은 오늘 장의 실제 결과를 반영해야 합니다 (예측이 아님).
+3. 오전 예측(morning_prediction)이 제공된 경우, 장 마감 결과와 비교하여 morning_accuracy를 평가하세요.
+4. sector_signals에는 위 "분석 대상 섹터"에 나열된 섹터명만 사용하세요.
+5. 각 섹터는 독립적으로 판단하세요.
+6. key_events에는 오늘 실제 일어난 이슈를 넣으세요 (서킷브레이커, 급등락, 주요 종목 이슈 등).
+7. risk_factors에는 오늘 장에서 배울 교훈이나 주의점을 넣으세요.
+8. opportunity에는 내일 장에 대한 간략한 포인트를 넣으세요.
+
+시그널 기준 (오늘 장 결과):
+- strong_bullish: 오늘 강한 상승 마감 (+3% 이상)
+- bullish: 오늘 상승 마감 (+0.5% ~ +3%)
+- neutral: 보합 마감 (-0.5% ~ +0.5%)
+- bearish: 오늘 하락 마감 (-0.5% ~ -3%)
+- strong_bearish: 오늘 강한 하락 마감 (-3% 이상)"""
+
+    def _build_market_close_context(self, live_market_data=None) -> str:
+        """장 마감 데이터를 AI에게 전달할 컨텍스트로 구성"""
+        if not live_market_data:
+            return ""
+
+        lines = ["\n=== 📊 장 마감 데이터 (오늘의 실제 결과 - 최우선 반영) ==="]
+
+        kospi = live_market_data.get("kospi")
+        if kospi:
+            sign = "+" if kospi.is_up else ""
+            arrow = "📈" if kospi.is_up else "📉"
+            lines.append(f"- 코스피: {kospi.value:,.2f} ({sign}{kospi.change_percent:.2f}%) {arrow}")
+
+        kosdaq = live_market_data.get("kosdaq")
+        if kosdaq:
+            sign = "+" if kosdaq.is_up else ""
+            arrow = "📈" if kosdaq.is_up else "📉"
+            lines.append(f"- 코스닥: {kosdaq.value:,.2f} ({sign}{kosdaq.change_percent:.2f}%) {arrow}")
+
+        usd_krw = live_market_data.get("usd_krw")
+        if usd_krw:
+            sign = "+" if usd_krw.is_up else ""
+            arrow = "📈" if usd_krw.is_up else "📉"
+            lines.append(f"- 원/달러: {usd_krw.value:,.2f} ({sign}{usd_krw.change_percent:.2f}%) {arrow}")
+
+        lines.append("")
+        lines.append("⚠️ 위는 오늘 장 마감 실제 결과입니다. overall_signal은 이 데이터를 기준으로 판단하세요.")
+        return "\n".join(lines)
+
+    def _build_live_market_context(self, live_market_data=None) -> str:
+        """실시간 시장 데이터를 AI에게 전달할 컨텍스트로 구성"""
+        if not live_market_data:
+            return ""
+
+        lines = ["\n=== 🇰🇷 실시간 지수 (가장 중요한 데이터) ==="]
+
+        kospi = live_market_data.get("kospi")
+        if kospi:
+            sign = "+" if kospi.is_up else ""
+            arrow = "📈" if kospi.is_up else "📉"
+            lines.append(f"- 코스피: {kospi.value:,.2f} ({sign}{kospi.change_percent:.2f}%) {arrow}")
+
+        kosdaq = live_market_data.get("kosdaq")
+        if kosdaq:
+            sign = "+" if kosdaq.is_up else ""
+            arrow = "📈" if kosdaq.is_up else "📉"
+            lines.append(f"- 코스닥: {kosdaq.value:,.2f} ({sign}{kosdaq.change_percent:.2f}%) {arrow}")
+
+        usd_krw = live_market_data.get("usd_krw")
+        if usd_krw:
+            sign = "+" if usd_krw.is_up else ""
+            arrow = "📈" if usd_krw.is_up else "📉"
+            lines.append(f"- 원/달러: {usd_krw.value:,.2f} ({sign}{usd_krw.change_percent:.2f}%) {arrow}")
+
+        lines.append("")
+        lines.append("⚠️ 위 실시간 지수가 현재 시장의 실제 방향입니다. 이 데이터를 최우선으로 반영하세요.")
+        return "\n".join(lines)
+
+    def _build_morning_prediction_context(self, morning_signal_cache: dict = None) -> str:
+        """오전 예측 데이터를 AI에게 전달할 컨텍스트로 구성"""
+        if not morning_signal_cache:
+            return ""
+
+        signal_kr = {
+            "strong_bullish": "강한 상승",
+            "bullish": "상승",
+            "neutral": "중립",
+            "bearish": "하락",
+            "strong_bearish": "강한 하락",
+        }
+
+        overall = morning_signal_cache.get("overall_signal", "neutral")
+        strength = morning_signal_cache.get("signal_strength", 0.5)
+        sentiment = morning_signal_cache.get("market_sentiment", "")
+
+        lines = ["\n=== 📋 오전 7시 예측 (비교용) ==="]
+        lines.append(f"- 예측 시그널: {signal_kr.get(overall, overall)} ({int(strength*100)}%)")
+        if sentiment:
+            lines.append(f"- 예측 요약: {sentiment}")
+        lines.append("(위 예측과 실제 지수를 비교하여 morning_accuracy를 평가하세요.)")
+        lines.append("")
+        return "\n".join(lines)
+
     def _format_news_for_analysis(self, items: list[ContentItem]) -> str:
-        """분석용 뉴스 포맷팅"""
-        lines = []
+        """분석용 뉴스 포맷팅 (시간대별 구분)"""
+        from datetime import datetime, timedelta
+
+        now = datetime.now()
+        # 전일 장 마감 기준 (15:30)
+        market_close = now.replace(hour=15, minute=30, second=0, microsecond=0) - timedelta(days=1)
+
+        recent_lines = []   # 장 마감 후 ~ 현재 (더 중요)
+        older_lines = []    # 그 이전 (이미 반영된 뉴스)
+
         for i, item in enumerate(items, 1):
             source = item.source or "Unknown"
             title = item.title
             desc = item.description[:150] if item.description else ""
 
-            line = f"{i}. [{source}] {title}"
+            # 발행 시간 확인
+            time_label = ""
+            is_recent = True
+            if item.published_at:
+                if item.published_at >= market_close:
+                    time_label = " [장 마감 후]"
+                else:
+                    time_label = " [장중/이전]"
+                    is_recent = False
+
+            line = f"{i}. [{source}]{time_label} {title}"
             if desc:
                 line += f" - {desc}"
-            lines.append(line)
 
-        return "\n".join(lines)
+            if is_recent:
+                recent_lines.append(line)
+            else:
+                older_lines.append(line)
+
+        result_lines = []
+        if recent_lines:
+            result_lines.append("--- 장 마감 후 ~ 새벽 뉴스 (오늘 장에 아직 미반영, 더 중요) ---")
+            result_lines.extend(recent_lines)
+        if older_lines:
+            result_lines.append("\n--- 장중/이전 뉴스 (이미 시장에 반영되었을 수 있음) ---")
+            result_lines.extend(older_lines)
+
+        return "\n".join(result_lines) if result_lines else "\n".join(
+            f"{i}. [{item.source or 'Unknown'}] {item.title}" for i, item in enumerate(items, 1)
+        )
 
 
 # 전역 인스턴스
