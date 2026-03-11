@@ -20,6 +20,7 @@ from src.analyzer.market_briefing import (
     MarketBriefing,
 )
 from src.analyzer.news_sentiment import classify_sentiment
+from src.analyzer.news_evaluator import evaluate_batch as ai_evaluate_news, apply_evaluation as apply_ai_evaluation
 
 __all__ = [
     # Groq Client
@@ -52,4 +53,7 @@ __all__ = [
     "MarketBriefing",
     # News Sentiment
     "classify_sentiment",
+    # AI News Evaluator
+    "ai_evaluate_news",
+    "apply_ai_evaluation",
 ]
