@@ -57,15 +57,20 @@ def create_market_close_embed(
     date = date or datetime.now()
     date_str = date.strftime("%Y년 %m월 %d일")
 
-    # 전체 시장 분위기 판단
+    # 전체 시장 분위기 판단 (코스피 가중 70%)
     market_mood = "🟢"  # 기본
     if market_data.kospi and market_data.kosdaq:
-        avg_change = (market_data.kospi.change_percent + market_data.kosdaq.change_percent) / 2
-        if avg_change >= 1.0:
+        weighted_change = (
+            market_data.kospi.change_percent * 0.7
+            + market_data.kosdaq.change_percent * 0.3
+        )
+        if weighted_change >= 2.0:
             market_mood = "🟢 강세"
-        elif avg_change >= 0.0:
+        elif weighted_change >= 0.5:
+            market_mood = "🟢 상승세"
+        elif weighted_change >= -0.5:
             market_mood = "🟡 보합세"
-        elif avg_change >= -1.0:
+        elif weighted_change >= -2.0:
             market_mood = "🟠 약세"
         else:
             market_mood = "🔴 약세"
