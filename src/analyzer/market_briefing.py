@@ -71,6 +71,7 @@ class MarketBriefingGenerator:
         report_items: list[ContentItem] = None,
         market_close_data: dict = None,
         morning_signal_cache: dict = None,
+        commodity_data: dict = None,
     ) -> Optional[MarketBriefing]:
         """
         장 마감 리뷰 생성 (오후 5시용)
@@ -101,9 +102,13 @@ class MarketBriefingGenerator:
         # 오전 예측 컨텍스트
         morning_context = self._format_morning_prediction(morning_signal_cache)
 
+        # 원자재 급변 컨텍스트
+        commodity_context = self._format_commodity_alert(commodity_data)
+
         prompt = f"""아래 제공된 실제 데이터만을 기반으로 오늘의 장 마감 리뷰를 작성해주세요.
 모든 문장은 '해요체'로 친근하게 작성하세요.
 {close_context}
+{commodity_context}
 {morning_context}
 === 오늘의 주요 뉴스 (실제 기사) ===
 {news_text}
@@ -161,6 +166,7 @@ class MarketBriefingGenerator:
         intl_news_items: list[ContentItem] = None,
         overnight_us_data: list = None,
         night_futures: list = None,
+        commodity_data: dict = None,
     ) -> Optional[MarketBriefing]:
         """
         아침 전략 브리핑 생성 (오전 7시용)
@@ -190,10 +196,14 @@ class MarketBriefingGenerator:
         us_market_text = self._format_overnight_us_data(overnight_us_data)
         night_futures_text = self._format_night_futures_data(night_futures)
 
+        # 원자재 급변 컨텍스트
+        commodity_context = self._format_commodity_alert(commodity_data)
+
         prompt = f"""아래 제공된 실제 데이터만을 기반으로 오늘의 장 전략 브리핑을 작성해주세요.
 모든 문장은 '해요체'로 친근하게 작성하세요.
 {us_market_text}
 {night_futures_text}
+{commodity_context}
 === 증권사 Morning Brief (전문가 분석) ===
 {brief_text if brief_text else "Morning Brief 없음"}
 
@@ -247,6 +257,32 @@ class MarketBriefingGenerator:
             logger.error(f"Failed to generate morning strategy: {e}")
 
         return None
+
+    def _format_commodity_alert(self, commodity_data: dict = None) -> str:
+        """원자재 급변 시 AI에게 전달할 컨텍스트 생성 (변동률 5% 이상만)"""
+        if not commodity_data:
+            return ""
+
+        alerts = []
+        for name, data in commodity_data.items():
+            change_pct = abs(data.get("change_percent", 0))
+            if change_pct >= 5.0:
+                direction = "급등" if data.get("is_up") else "급락"
+                sign = "+" if data.get("change", 0) >= 0 else ""
+                alerts.append(
+                    f"- {name}: {data['value']:,.2f} "
+                    f"({sign}{data['change']:.2f}, {sign}{data.get('change_percent', 0):.1f}%) "
+                    f"⚠️ {direction}"
+                )
+
+        if not alerts:
+            return ""
+
+        lines = ["\n=== 🚨 원자재 급변 (반드시 key_points에 포함하세요) ==="]
+        lines.extend(alerts)
+        lines.append("(위 원자재 급변은 관련 섹터에 큰 영향을 줍니다. 반드시 브리핑에 포함하세요.)")
+        lines.append("")
+        return "\n".join(lines)
 
     def _format_night_futures_data(self, night_futures: list = None) -> str:
         """야간 선물 마감 데이터를 텍스트로 변환"""
