@@ -395,9 +395,15 @@ class MarketSignalAnalyzer:
         # 빈 섹터 제거
         return {k: v for k, v in categorized.items() if v}
 
+    # 부정적 긴급 키워드 (이 키워드가 감지되면 맥락 검증 필요)
+    NEGATIVE_BREAKING = {"급락", "폭락", "폭등", "대폭", "하한가", "사상최저", "충격"}
+    # 긍정적 맥락 키워드 (부정 키워드와 함께 등장하면 오탐 가능성)
+    POSITIVE_CONTEXT = {"반등", "회복", "상승", "강세", "급등", "호전", "반전", "개선", "만회"}
+
     def detect_breaking_news(self, items: list[ContentItem]) -> list[ContentItem]:
         """
         급등/급락 등 시장 급변 뉴스 감지
+        맥락 검증으로 오탐 방지 (제목에 "폭락"이 있어도 내용이 긍정이면 제외)
 
         Returns:
             긴급 뉴스 리스트
@@ -411,13 +417,41 @@ class MarketSignalAnalyzer:
 
         breaking_news = []
         for item in items:
-            text = f"{item.title} {item.description or ''}".lower()
+            title_lower = item.title.lower()
+            desc_lower = (item.description or "").lower()
+            text = f"{title_lower} {desc_lower}"
+
             for keyword in breaking_keywords:
-                if keyword in text:
-                    item.extra_data["is_breaking"] = True
-                    item.extra_data["breaking_keyword"] = keyword
-                    breaking_news.append(item)
-                    break
+                if keyword not in text:
+                    continue
+
+                # 맥락 검증: 부정 키워드가 description에만 있고 title은 긍정이면 스킵
+                if keyword in self.NEGATIVE_BREAKING:
+                    # 제목에서 긍정 맥락 단어 개수
+                    positive_in_title = sum(
+                        1 for pw in self.POSITIVE_CONTEXT if pw in title_lower
+                    )
+                    # 키워드가 제목이 아닌 설명에만 있고, 제목이 긍정적이면 스킵
+                    if keyword not in title_lower and positive_in_title >= 1:
+                        logger.debug(
+                            f"Breaking news skipped (context mismatch): "
+                            f"keyword='{keyword}' in desc but title is positive: {item.title[:50]}"
+                        )
+                        continue
+                    # 제목에 부정 키워드가 있지만 긍정 맥락이 더 많으면 스킵
+                    negative_in_title = sum(
+                        1 for nw in self.NEGATIVE_BREAKING if nw in title_lower
+                    )
+                    if positive_in_title > negative_in_title:
+                        logger.debug(
+                            f"Breaking news skipped (positive > negative): {item.title[:50]}"
+                        )
+                        continue
+
+                item.extra_data["is_breaking"] = True
+                item.extra_data["breaking_keyword"] = keyword
+                breaking_news.append(item)
+                break
 
         if breaking_news:
             logger.info(f"Detected {len(breaking_news)} breaking news items")
@@ -670,7 +704,11 @@ class MarketSignalAnalyzer:
             time_label = ""
             is_recent = True
             if item.published_at:
-                if item.published_at >= market_close:
+                # aware datetime → naive 변환 (timezone 혼재 대응)
+                pub = item.published_at
+                if pub.tzinfo is not None:
+                    pub = pub.replace(tzinfo=None)
+                if pub >= market_close:
                     time_label = " [장 마감 후]"
                 else:
                     time_label = " [장중/이전]"
