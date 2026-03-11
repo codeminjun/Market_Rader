@@ -15,6 +15,7 @@ from config.settings import settings, get_news_sources, get_youtube_channels
 from src.utils.logger import logger
 from src.utils.cache import cache
 from src.utils.weekly_archive import weekly_archive
+from src.utils.dedup import deduplicate_by_title
 
 # Collectors
 from src.collectors.base import ContentItem, ContentType
@@ -419,33 +420,74 @@ def analyze_content(
         else:
             logger.info("[DRY-RUN] 시장 시그널 AI 분석 스킵")
 
-        # 3-3. 긴급 뉴스 감지
-        try:
-            result["breaking_news"] = market_signal_analyzer.detect_breaking_news(all_news)
-        except Exception as e:
-            logger.warning(f"Breaking news detection failed: {e}")
+        # 3-3. 통합 AI 뉴스 평가 (긴급뉴스 + 감성분류 + 중요도 재평가를 1회 호출)
+        # 기존: 키워드 긴급뉴스(3-3) + 키워드→AI 감성분류(3-5) = Gemini 1회
+        # 개선: AI가 맥락 파악하여 3가지를 동시 평가 = Gemini 1회 (대체)
+        ai_eval_success = False
+        if not is_dry_run:
+            try:
+                from src.analyzer.news_evaluator import evaluate_batch, apply_evaluation
+                ai_evals = evaluate_batch(all_news[:20])
+                if ai_evals:
+                    # AI 결과 적용 (중요도 블렌딩 + 감성 + 긴급뉴스)
+                    apply_evaluation(all_news, ai_evals)
+                    ai_eval_success = True
+
+                    # 긴급뉴스: AI 판단 결과
+                    result["breaking_news"] = [
+                        item for item in all_news
+                        if item.extra_data.get("ai_breaking")
+                    ]
+
+                    # 감성 분류: AI 판단 결과 (오전 스케줄용)
+                    if schedule_type == "morning":
+                        from src.utils.constants import NewsSettings
+                        positive = [
+                            item for item in result["korean_news"]
+                            if item.extra_data.get("ai_sentiment") == "positive"
+                        ]
+                        negative = [
+                            item for item in result["korean_news"]
+                            if item.extra_data.get("ai_sentiment") == "negative"
+                        ]
+                        # 중요도순 정렬
+                        positive.sort(key=lambda x: x.importance_score, reverse=True)
+                        negative.sort(key=lambda x: x.importance_score, reverse=True)
+                        result["positive_news"] = positive[:NewsSettings.MAX_POSITIVE_NEWS]
+                        result["negative_news"] = negative[:NewsSettings.MAX_NEGATIVE_NEWS]
+                        logger.info(f"AI sentiment: {len(result['positive_news'])} positive, {len(result['negative_news'])} negative")
+
+                    logger.info(f"AI evaluation applied: {len(result['breaking_news'])} breaking news")
+            except Exception as e:
+                logger.warning(f"AI news evaluation failed, falling back to keyword: {e}")
+
+        # 폴백: AI 실패 또는 DRY-RUN 시 키워드 기반 처리
+        if not ai_eval_success:
+            try:
+                result["breaking_news"] = market_signal_analyzer.detect_breaking_news(all_news)
+            except Exception as e:
+                logger.warning(f"Breaking news detection failed: {e}")
+
+            if schedule_type == "morning" and result["korean_news"]:
+                try:
+                    from src.utils.constants import NewsSettings
+                    positive, negative = classify_sentiment(
+                        result["korean_news"],
+                        max_positive=NewsSettings.MAX_POSITIVE_NEWS,
+                        max_negative=NewsSettings.MAX_NEGATIVE_NEWS,
+                        use_ai=not is_dry_run,
+                    )
+                    result["positive_news"] = positive
+                    result["negative_news"] = negative
+                    logger.info(f"Keyword sentiment: {len(positive)} positive, {len(negative)} negative")
+                except Exception as e:
+                    logger.warning(f"Sentiment classification failed: {e}")
 
         # 3-4. 섹터별 분류
         try:
             result["sector_news"] = market_signal_analyzer.categorize_by_sector(all_news)
         except Exception as e:
             logger.warning(f"Sector categorization failed: {e}")
-
-        # 3-5. 뉴스 감성 분류 (오전 스케줄용)
-        if schedule_type == "morning" and result["korean_news"]:
-            try:
-                from src.utils.constants import NewsSettings
-                positive, negative = classify_sentiment(
-                    result["korean_news"],
-                    max_positive=NewsSettings.MAX_POSITIVE_NEWS,
-                    max_negative=NewsSettings.MAX_NEGATIVE_NEWS,
-                    use_ai=not is_dry_run,
-                )
-                result["positive_news"] = positive
-                result["negative_news"] = negative
-                logger.info(f"Sentiment: {len(positive)} positive, {len(negative)} negative")
-            except Exception as e:
-                logger.warning(f"Sentiment classification failed: {e}")
 
     # 4. 리포트 중요도 평가 - 중요도 높은 순
     if reports:
@@ -820,6 +862,11 @@ def send_to_discord(analyzed: dict) -> bool:
         korean_news = analyzed.get("korean_news", [])[:NewsSettings.MAX_KOREAN_NEWS]
         intl_news = analyzed.get("international_news", [])[:NewsSettings.MAX_INTL_NEWS]
 
+    # 제목 유사도 기반 중복 제거 (같은 이벤트를 다른 언론사가 보도한 경우)
+    korean_news = deduplicate_by_title(korean_news)
+    if intl_news:
+        intl_news = deduplicate_by_title(intl_news)
+
     all_news = korean_news + intl_news
 
     # 0. Morning Brief (오전 스케줄) - 별도 Embed 없음, AI 전략에 입력으로만 사용
@@ -869,16 +916,36 @@ def send_to_discord(analyzed: dict) -> bool:
     if schedule_type == "afternoon":
         # 시장 데이터 수집 (종가)
         market_data = None
+        commodity_data = None
         try:
             market_data = market_data_collector.collect()
             if market_data.kospi or market_data.usd_krw:
                 market_close_embed = create_market_close_embed(market_data, now)
                 embeds.append(market_close_embed)
                 logger.info("Added market close summary embed")
+            # 원자재 데이터 추출 (브리핑용)
+            if market_data:
+                _commodity = {}
+                if market_data.wti:
+                    _commodity["WTI 유가"] = {
+                        "value": market_data.wti.value,
+                        "change": market_data.wti.change,
+                        "change_percent": market_data.wti.change_percent,
+                        "is_up": market_data.wti.is_up,
+                    }
+                if market_data.gold:
+                    _commodity["국제 금"] = {
+                        "value": market_data.gold.value,
+                        "change": market_data.gold.change,
+                        "change_percent": market_data.gold.change_percent,
+                        "is_up": market_data.gold.is_up,
+                    }
+                if _commodity:
+                    commodity_data = _commodity
         except Exception as e:
             logger.warning(f"Failed to collect market data: {e}")
 
-        # AI 장 마감 리뷰 생성 (실제 종가 데이터 포함)
+        # AI 장 마감 리뷰 생성 (실제 종가 데이터 + 원자재 급변 포함)
         if all_news and not is_dry_run:
             try:
                 closing_briefing = market_briefing_generator.generate_closing_review(
@@ -886,6 +953,7 @@ def send_to_discord(analyzed: dict) -> bool:
                     report_items=reports[:5] if reports else None,
                     market_close_data=analyzed.get("live_market"),
                     morning_signal_cache=analyzed.get("morning_prediction"),
+                    commodity_data=commodity_data,
                 )
                 if closing_briefing:
                     # 브리핑 검증 (키워드/출처만 - 수치 검증 불필요)
