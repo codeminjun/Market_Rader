@@ -171,6 +171,9 @@ def create_reports_list_embed(
         report_lines.append(line)
 
     if report_lines:
+        # 범례 추가
+        report_lines.append("")
+        report_lines.append("`🔴 필독` `🟠 주목` `🟡 참고`")
         embed.description = "\n".join(report_lines)
 
     return embed
